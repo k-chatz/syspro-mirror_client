@@ -2,6 +2,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <assert.h>
+#include <sys/stat.h>
 
 typedef void *pointer;
 
@@ -68,6 +69,7 @@ void readOptions(
 int main(int argc, char *argv[]) {
     unsigned long int id = 0, buffer_size = 0;
     char *common_dir = NULL, *input_dir = NULL, *mirror_dir = NULL, *log_file = NULL;
+    struct stat s = {0};
 
     /*Read argument options from command line*/
     readOptions(argc, argv, &id, &common_dir, &input_dir, &mirror_dir, &buffer_size, &log_file);
@@ -79,6 +81,15 @@ int main(int argc, char *argv[]) {
     assert(buffer_size > 0);
     assert(log_file != NULL);
 
+    if (!stat(input_dir, &s)) {
+        if (S_ISDIR(s.st_mode)) {
+            printf("'%s' is a directory.\n", input_dir);
+        } else {
+            printf("'%s' is not a directory.\n", input_dir);
+        }
+    } else {
+        perror("stat()");
+    }
 
     return 0;
 }
