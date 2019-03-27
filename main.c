@@ -81,15 +81,31 @@ int main(int argc, char *argv[]) {
     assert(buffer_size > 0);
     assert(log_file != NULL);
 
+    /**
+     * Check if input_dir directory exists.*/
     if (!stat(input_dir, &s)) {
-        if (S_ISDIR(s.st_mode)) {
-            printf("'%s' is a directory.\n", input_dir);
-        } else {
-            printf("'%s' is not a directory.\n", input_dir);
+        if (!S_ISDIR(s.st_mode)) {
+            fprintf(stderr, "'%s' is not a directory!\n", input_dir);
+            exit(EXIT_FAILURE);
         }
     } else {
-        perror("stat()");
+        perror(input_dir);
+        exit(EXIT_FAILURE);
     }
+
+    /**
+     * Check if mirror_dir directory already exists.*/
+    if (!stat(mirror_dir, &s)) {
+        fprintf(stderr, "'%s' directory already exists!\n", mirror_dir);
+        exit(EXIT_FAILURE);
+    } else {
+        mkdir(mirror_dir, 0777);
+    }
+
+    mkdir(common_dir, 0777);
+
+
+
 
     return 0;
 }
