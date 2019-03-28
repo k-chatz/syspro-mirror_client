@@ -3,6 +3,8 @@
 #include <string.h>
 #include <assert.h>
 #include <sys/stat.h>
+#include <unistd.h>
+
 
 typedef void *pointer;
 
@@ -68,8 +70,9 @@ void readOptions(
 
 int main(int argc, char *argv[]) {
     unsigned long int id = 0, buffer_size = 0;
-    char *common_dir = NULL, *input_dir = NULL, *mirror_dir = NULL, *log_file = NULL;
+    char *common_dir = NULL, *input_dir = NULL, *mirror_dir = NULL, *log_file = NULL, buffer[50];
     struct stat s = {0};
+    FILE *fid = NULL,  *flog = NULL;
 
     /*Read argument options from command line*/
     readOptions(argc, argv, &id, &common_dir, &input_dir, &mirror_dir, &buffer_size, &log_file);
@@ -104,8 +107,31 @@ int main(int argc, char *argv[]) {
 
     mkdir(common_dir, 0777);
 
+    sprintf(buffer, "%s/%lu.id", common_dir, id);
+    puts(buffer);
+
+    /**
+     * Check if *.id file exists.*/
+    if (!stat(buffer, &s)) {
+        fprintf(stderr, "'%s' already exists!\n", buffer);
+        exit(EXIT_FAILURE);
+    } else {
+        fid = fopen(buffer, "w");
+        fprintf(fid, "%d", (int) getpid());
+    }
 
 
+    /**
+     * Check if log_file file already exists.*/
+    if (!stat(log_file, &s)) {
+        fprintf(stderr, "'%s' file already exists!\n", log_file);
+        exit(EXIT_FAILURE);
+    } else {
+        flog = fopen(log_file, "w");
+    }
+
+    fclose(fid);
+    fclose(flog);
 
     return 0;
 }
