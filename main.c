@@ -8,6 +8,7 @@
 #include <sys/inotify.h>
 #include <errno.h>
 #include <zconf.h>
+#include <signal.h>
 
 #define EVENT_SIZE (sizeof(struct inotify_event))
 #define EVENT_BUF_LEN (1024 * (EVENT_SIZE + 16))
@@ -81,7 +82,6 @@ void sender() {
     sleep(1000);
 }
 
-
 void receiver() {
     printf("\nHI! I'm the receiver, my pid is [%d], my parent is [%d]\n", getpid(), getppid());
 
@@ -134,15 +134,6 @@ void in_create(struct inotify_event *event) {
                 }
 
 
-
-
-
-
-
-
-
-
-
             }
         }
     }
@@ -176,6 +167,10 @@ void in_delete(struct inotify_event *event) {
     }
 }
 
+void sig_int_quit_action(int signo) {
+    printf("sig_int_quit_action ::: signo: %d\n", signo);
+}
+
 int main(int argc, char *argv[]) {
     char buffer[50], buf[EVENT_BUF_LEN];
     unsigned long int buffer_size = 0;
@@ -183,6 +178,10 @@ int main(int argc, char *argv[]) {
     int inotfd = 0, i, wd;
     struct stat s = {0};
     ssize_t bytes;
+    static struct sigaction act;
+
+    printf("pid: %d\n", getpid());
+
 
     /*Read argument options from command line*/
     readOptions(argc, argv, &id, &common_dir, &input_dir, &mirror_dir, &buffer_size, &log_file);
@@ -242,11 +241,23 @@ int main(int argc, char *argv[]) {
         flog = fopen(log_file, "w");
     }
 
+    /**
+     * Initialize inotify.*/
     inotfd = inotify_init();
     if (inotfd < 0) {
         perror("inotify_init");
     }
 
+    /**
+     * Set custom signal action for SIGINT & SIGQUIT signals.*/
+    act.sa_handler = sig_int_quit_action;
+    sigfillset(&(act.sa_mask));
+    sigaction(SIGINT, &act, NULL);
+    sigaction(SIGQUIT, &act, NULL);
+
+
+    /**
+     * Add common_dir at watch list to detect changes.*/
     wd = inotify_add_watch(inotfd, common_dir, IN_CREATE | IN_DELETE);
 
     while (1) {
@@ -269,10 +280,12 @@ int main(int argc, char *argv[]) {
         }
     }
 
-    /*removing the “/tmp” directory from the watch list.*/
+    /**
+     * Remove common_dir from watch list.*/
     inotify_rm_watch(inotfd, wd);
 
-    /*closing the INOTIFY instance*/
+    /**
+     * Close the inotify instance.*/
     close(inotfd);
 
 
