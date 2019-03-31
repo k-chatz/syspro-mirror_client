@@ -2,11 +2,18 @@
 #include <stdlib.h>
 #include <string.h>
 #include <assert.h>
-#include <sys/stat.h>
 #include <unistd.h>
+#include <sys/stat.h>
+#include <sys/types.h>
+#include <sys/inotify.h>
+#include <errno.h>
+#include <zconf.h>
 
+#define EVENT_SIZE (sizeof(struct inotify_event))
+#define EVENT_BUF_LEN (1024 * (EVENT_SIZE + 16))
 
-typedef void *pointer;
+char *common_dir = NULL, *input_dir = NULL, *mirror_dir = NULL, *log_file = NULL;
+unsigned long int id = 0;
 
 void wrongOptionValue(char *opt, char *val) {
     fprintf(stdout, "Wrong value [%s] for option '%s'\n", val, opt);
@@ -68,11 +75,114 @@ void readOptions(
     }
 }
 
-int main(int argc, char *argv[]) {
-    unsigned long int id = 0, buffer_size = 0;
-    char *common_dir = NULL, *input_dir = NULL, *mirror_dir = NULL, *log_file = NULL, buffer[50];
+void sender() {
+    printf("\nHI! I'm the sender, my pid is [%d], my parent is [%d]\n", getpid(), getppid());
+
+    sleep(1000);
+}
+
+
+void receiver() {
+    printf("\nHI! I'm the receiver, my pid is [%d], my parent is [%d]\n", getpid(), getppid());
+
+    sleep(1000);
+}
+
+void in_create(struct inotify_event *event) {
+    __pid_t s_pid, r_pid;
     struct stat s = {0};
-    FILE *fid = NULL,  *flog = NULL;
+    char buffer[50];
+
+    if (event->mask & IN_ISDIR) {
+        printf("Directory: [%s] created.\n", event->name);
+    } else {
+        printf("File: [%s] created.\n", event->name);
+        sprintf(buffer, "%s/%s", common_dir, event->name);
+
+        //if is file
+        //if is *.id file
+
+        if (!stat(buffer, &s)) {
+            if (!S_ISDIR(s.st_mode)) {
+
+                fprintf(stdout, "'%s' is a *.id file, now I try to fork my self!\n", buffer);
+
+
+
+
+
+                /* Create sender.*/
+                s_pid = fork();
+                if (s_pid < 0) {
+                    perror("fork");
+                    exit(EXIT_FAILURE);
+                }
+                if (s_pid == 0) {
+                    sender();
+                    exit(EXIT_SUCCESS);
+                }
+
+                /* Create receiver.*/
+                r_pid = fork();
+                if (r_pid < 0) {
+                    perror("fork");
+                    exit(EXIT_FAILURE);
+                }
+                if (r_pid == 0) {
+                    receiver();
+                    exit(EXIT_SUCCESS);
+                }
+
+
+
+
+
+
+
+
+
+
+
+            }
+        }
+    }
+}
+
+void in_delete(struct inotify_event *event) {
+    __pid_t dpid;
+    struct stat s = {0};
+    char buffer[50];
+
+    if (event->mask & IN_ISDIR) {
+        printf("Directory: [%s] deleted.\n", event->name);
+    } else {
+        printf("File: [%s] deleted.\n", event->name);
+
+        sprintf(buffer, "%s/%s", common_dir, event->name);
+
+        fprintf(stdout, "'%s' is a *.id file, now I try to fork my self!\n", buffer);
+
+        dpid = fork();
+        if (dpid < 0) {
+            perror("fork");
+            exit(EXIT_FAILURE);
+        }
+        if (dpid == 0) {
+            //Destroy childs for certain id
+            exit(EXIT_SUCCESS);
+        } else if (dpid > 0) {
+            printf("HI! I'm parent, my pid is: [%d], I create child with pid [%d]\n", getpid(), dpid);
+        }
+    }
+}
+
+int main(int argc, char *argv[]) {
+    char buffer[50], buf[EVENT_BUF_LEN];
+    unsigned long int buffer_size = 0;
+    FILE *fid = NULL, *flog = NULL;
+    int inotfd = 0, i, wd;
+    struct stat s = {0};
+    ssize_t bytes;
 
     /*Read argument options from command line*/
     readOptions(argc, argv, &id, &common_dir, &input_dir, &mirror_dir, &buffer_size, &log_file);
@@ -105,13 +215,16 @@ int main(int argc, char *argv[]) {
         mkdir(mirror_dir, 0777);
     }
 
+    /**
+     * Create common_dir*/
     mkdir(common_dir, 0777);
 
+    /**
+     * Prepare *.id file path*/
     sprintf(buffer, "%s/%lu.id", common_dir, id);
-    puts(buffer);
 
     /**
-     * Check if *.id file exists.*/
+     * Check if [id].id file exists.*/
     if (!stat(buffer, &s)) {
         fprintf(stderr, "'%s' already exists!\n", buffer);
         exit(EXIT_FAILURE);
@@ -119,7 +232,6 @@ int main(int argc, char *argv[]) {
         fid = fopen(buffer, "w");
         fprintf(fid, "%d", (int) getpid());
     }
-
 
     /**
      * Check if log_file file already exists.*/
@@ -129,6 +241,40 @@ int main(int argc, char *argv[]) {
     } else {
         flog = fopen(log_file, "w");
     }
+
+    inotfd = inotify_init();
+    if (inotfd < 0) {
+        perror("inotify_init");
+    }
+
+    wd = inotify_add_watch(inotfd, common_dir, IN_CREATE | IN_DELETE);
+
+    while (1) {
+        bytes = read(inotfd, buf, EVENT_BUF_LEN);
+        if (bytes < 0) {
+            perror("read");
+        }
+
+        i = 0;
+        while (i < bytes) {
+            struct inotify_event *event = (struct inotify_event *) &buf[i];
+            if (event->len) {
+                if (event->mask & IN_CREATE) {
+                    in_create(event);
+                } else if (event->mask & IN_DELETE) {
+                    in_delete(event);
+                }
+            }
+            i += EVENT_SIZE + event->len;
+        }
+    }
+
+    /*removing the “/tmp” directory from the watch list.*/
+    inotify_rm_watch(inotfd, wd);
+
+    /*closing the INOTIFY instance*/
+    close(inotfd);
+
 
     fclose(fid);
     fclose(flog);
