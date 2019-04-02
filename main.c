@@ -12,16 +12,17 @@
 #include <dirent.h>
 #include <math.h>
 #include <stdbool.h>
-
+#include "hash.h"
 
 #define EVENT_SIZE (sizeof(struct inotify_event))
 #define EVENT_BUF_LEN (1024 * (EVENT_SIZE + 16))
-
 #define TRIES 3
+
+typedef void *pointer;
 
 char *common_dir = NULL, *input_dir = NULL, *mirror_dir = NULL, *log_file = NULL;
 int id = 0;
-__pid_t s_pid = 0, r_pid = 0;
+__pid_t sender_pid = 0, receiver_pid = 0;
 bool quit = false;
 
 unsigned int digits(int n) {
@@ -89,97 +90,109 @@ void readOptions(
     }
 }
 
-void sender() {
+void sender(int receiverId) {
     char *buffer = NULL;
-    int senderId = id, receiverId = 0;
-    printf("\nHI! I'm the sender, my pid is [%d], my parent is [%d]\n", getpid(), getppid());
-    buffer = malloc((size_t) (strlen(common_dir) + digits(senderId) + digits(receiverId) + 15));
-    sprintf(buffer, "%s/id%d_to_id%d.fifo", common_dir, senderId, receiverId);
-    puts(buffer);
-
-    free(buffer);
-}
-
-void receiver() {
-    printf("\nHI! I'm the receiver, my pid is [%d], my parent is [%d]\n", getpid(), getppid());
-    sleep(10);
-}
-
-void in_create(struct inotify_event *event) {
-    __pid_t s_pid, r_pid;
-    struct stat s = {0};
-    char buffer[50];
-
-    if (event->mask & IN_ISDIR) {
-        printf("Directory: [%s] created.\n", event->name);
-    } else {
-        printf("File: [%s] created.\n", event->name);
-        sprintf(buffer, "%s/%s", common_dir, event->name);
-
-        //if is file
-        //if is *.id file
-
-        if (!stat(buffer, &s)) {
-            if (!S_ISDIR(s.st_mode)) {
-
-                fprintf(stdout, "'%s' is a *.id file, now I try to fork my self!\n", buffer);
-
-
-
-
-
-                /* Create sender.*/
-                s_pid = fork();
-                if (s_pid < 0) {
-                    perror("fork");
-                    exit(EXIT_FAILURE);
-                }
-                if (s_pid == 0) {
-                    sender();
-                    exit(EXIT_SUCCESS);
-                }
-
-                /* Create receiver.*/
-                r_pid = fork();
-                if (r_pid < 0) {
-                    perror("fork");
-                    exit(EXIT_FAILURE);
-                }
-                if (r_pid == 0) {
-                    receiver();
-                    exit(EXIT_SUCCESS);
-                }
-
-
-            }
+    size_t lb = 0;
+    printf("\nSENDER PID: [%d], PARENT PID: [%d]\n", getpid(), getppid());
+    lb = (size_t) (strlen(common_dir) + digits(id) + digits(receiverId) + 15);
+    if ((buffer = malloc(lb))) {
+        sprintf(buffer, "%s/id%d_to_id%d.fifo", common_dir, id, receiverId);
+        printf("FIFO: [%s]\n", buffer);
+        if (mkfifo(buffer, 0755)) {
+            perror(buffer);
         }
+
+        //TODO: Open fifo
+
+        //TODO: Read fifo
+
+        //TODO: Close fifo
+
+        free(buffer);
+    } else {
+        perror("malloc");
     }
 }
 
-void sig_int_quit_action(int signo) {
+void receiver(int senderId) {
     char *buffer = NULL;
-    printf("sig_int_quit_action ::: signo: %d\n", signo);
+    size_t lb = 0;
+    printf("\nRECEIVER PID: [%d], PARENT PID: [%d]\n", getpid(), getppid());
+    lb = (size_t) (strlen(common_dir) + digits(senderId) + digits(id) + 15);
+    if ((buffer = malloc(lb))) {
+        sprintf(buffer, "%s/id%d_to_id%d.fifo", common_dir, senderId, id);
+        printf("FIFO: [%s]\n", buffer);
+        if (mkfifo(buffer, 0755)) {
+            perror(buffer);
+        }
+
+        //TODO: Open fifo
+
+        //TODO: Read fifo
+
+        //TODO: Close fifo
+
+        free(buffer);
+    } else {
+        perror("malloc");
+    }
+}
+
+void sig_int_quit_action(int signal) {
+    char *buffer = NULL;
+    size_t lb = 0;
+
+    printf("sig_int_quit_action ::: signo: %d\n", signal);
 
     rmdir(mirror_dir);
 
-    buffer = malloc((size_t) (strlen(common_dir) + digits(id)) + 5);
-    sprintf(buffer, "%s/%d.id", common_dir, id);
+    lb = (size_t) (strlen(common_dir) + digits(id)) + 5;
+    if ((buffer = malloc(lb))) {
 
-    if (unlink(buffer) < 0) {
-        perror(buffer);
+        sprintf(buffer, "%s/%d.id", common_dir, id);
+
+        if (unlink(buffer) < 0) {
+            perror(buffer);
+        }
+
+        if (receiver_pid) {
+            kill(receiver_pid, SIGUSR2);
+        }
+
+        if (sender_pid) {
+            kill(sender_pid, SIGUSR2);
+        }
+
+        free(buffer);
+    } else {
+        perror("malloc");
     }
 
-    if (r_pid) {
-        kill(r_pid, SIGUSR2);
-    }
 
-    if (s_pid) {
-        kill(s_pid, SIGUSR2);
-    }
-
-    free(buffer);
     quit = true;
 }
+
+char *clientCreate(char *fn) {
+    return fn;
+}
+
+int clientCompare(char *fn1, char *fn2) {
+    return strcmp(fn1, fn2);
+}
+
+unsigned long int clientHash(char *key, unsigned long int capacity) {
+    int i, sum = 0;
+    size_t keyLength = strlen(key);
+    for (i = 0; i < keyLength; i++) {
+        sum += key[i];
+    }
+    return sum % capacity;
+}
+
+void clientDestroy(char *fn) {
+    free(fn);
+}
+
 
 int main(int argc, char *argv[]) {
     char event_buffer[EVENT_BUF_LEN], *buffer = NULL;
@@ -191,6 +204,15 @@ int main(int argc, char *argv[]) {
     static struct sigaction act;
     __pid_t d_pid = 0;
     char *folder = NULL;
+    int client = 0;
+    struct dirent *d = NULL;
+    DIR *dir = NULL;
+    size_t lb;
+    Hashtable clientsHT = NULL;
+    char *fn = NULL;
+    char *filename = NULL;
+    struct inotify_event *event = NULL;
+
 
     printf("pid: %d\n", getpid());
 
@@ -227,18 +249,24 @@ int main(int argc, char *argv[]) {
     mkdir(common_dir, 0777);
 
     /* Prepare *.id file path*/
-    buffer = malloc((size_t) (strlen(common_dir) + digits(id)) + 5);
-    sprintf(buffer, "%s/%d.id", common_dir, id);
+    lb = (size_t) (strlen(common_dir) + digits(id)) + 5;
+    if ((buffer = malloc(lb))) {
+        sprintf(buffer, "%s/%d.id", common_dir, id);
 
-    /* Check if [id].id file exists.*/
-    if (!stat(buffer, &s)) {
-        fprintf(stderr, "'%s' already exists!\n", buffer);
-        exit(EXIT_FAILURE);
+        /* Check if [id].id file exists.*/
+        if (!stat(buffer, &s)) {
+            fprintf(stderr, "'%s' already exists!\n", buffer);
+            exit(EXIT_FAILURE);
+        } else {
+            fid = fopen(buffer, "w");
+            fprintf(fid, "%d", (int) getpid());
+        }
+        free(buffer);
+
     } else {
-        fid = fopen(buffer, "w");
-        fprintf(fid, "%d", (int) getpid());
+        perror("malloc");
+        exit(EXIT_FAILURE);
     }
-    free(buffer);
 
 
     /* Check if log_file file already exists.*/
@@ -252,7 +280,7 @@ int main(int argc, char *argv[]) {
     /* Initialize inotify.*/
     inotfd = inotify_init();
     if (inotfd < 0) {
-        perror("inotify_init");
+        perror("i-notify_init");
     }
 
     /* Set custom signal action for SIGINT (^c) & SIGQUIT (^\) signals.*/
@@ -264,63 +292,141 @@ int main(int argc, char *argv[]) {
     /* Add common_dir at watch list to detect changes.*/
     wd = inotify_add_watch(inotfd, common_dir, IN_CREATE | IN_DELETE);
 
+    /*Initialize clients hashtable*/
+    HT_Init(
+            &clientsHT,
+            100,
+            512,
+            (pointer (*)(pointer)) clientCreate,
+            (int (*)(pointer, pointer)) clientCompare,
+            (unsigned long (*)(pointer, unsigned long int)) clientHash,
+            (unsigned long (*)(pointer)) clientDestroy
+    );
+
+    printf("\n::::::::::::::::::::::::::::::::::::::::::::::::::\n");
+    // Search for not processed clients.
+    if ((dir = opendir(common_dir))) {
+        while ((d = readdir(dir))) {
+            if (!strcmp(d->d_name, ".") || !strcmp(d->d_name, "..")) {
+                continue;
+            }
+            lb = strlen(common_dir) + strlen(d->d_name) + 2;
+
+            /* Make a copy of filename.*/
+            filename = malloc(sizeof(char) * strlen(d->d_name) + 1);
+            strcpy(filename, d->d_name);
+
+            client = (int) strtol(strtok(d->d_name, "."), NULL, 10);
+            if (client > 0 && client != id) {
+
+                /* Check file suffix to determine if it ends with '.id'.*/
+                if (!strcmp(strtok(NULL, "\0"), "id")) {
+
+                    if (HT_Insert(clientsHT, filename, filename, (void **) &fn)) {
+                        if ((buffer = malloc(lb))) {
+                            sprintf(buffer, "%s/%s", common_dir, filename);
+                            if (!stat(buffer, &s)) {
+                                if (!S_ISDIR(s.st_mode)) {
+
+                                    /* Create sender.*/
+                                    sender_pid = fork();
+                                    if (sender_pid < 0) {
+                                        perror("fork");
+                                        exit(EXIT_FAILURE);
+                                    }
+                                    if (sender_pid == 0) {
+                                        sender(client);
+                                        exit(EXIT_SUCCESS);
+                                    }
+
+                                    /* Create receiver.*/
+                                    receiver_pid = fork();
+                                    if (receiver_pid < 0) {
+                                        perror("fork");
+                                        exit(EXIT_FAILURE);
+                                    }
+                                    if (receiver_pid == 0) {
+                                        receiver(client);
+                                        exit(EXIT_SUCCESS);
+                                    }
+                                    sleep(1);
+                                }
+                            } else {
+                                perror("stat");
+                            }
+                            free(buffer);
+                        }
+                    } else {
+                        fprintf(stderr, "\n---HT File: [%s] already exists!---\n", fn);
+                    }
+                }
+            }
+        }
+        printf("\n::::::::::::::::::::::::::::::::::::::::::::::\n\n");
+        closedir(dir);
+    }
+
     while (!quit) {
         bytes = read(inotfd, event_buffer, EVENT_BUF_LEN);
         if (bytes < 0) {
-            perror("read inotify event");
+            perror("read i-notify event");
         }
         ev = 0;
         while (ev < bytes) {
-            struct inotify_event *event = (struct inotify_event *) &event_buffer[ev];
+            event = (struct inotify_event *) &event_buffer[ev];
             if (event->len) {
                 if (event->mask & IN_CREATE) {
                     if (!(event->mask & IN_ISDIR)) {
-                        printf("File: [%s] created.\n", event->name);
+                        //printf("File: [%s] created.\n", event->name);
+                        lb = (size_t) (strlen(common_dir) + strlen(event->name)) + 2;
 
-                        //TODO: New file was added... call scan_for_ids() funtion to find the new file.
+                        /* Make a copy of filename.*/
+                        filename = malloc(sizeof(char) * strlen(event->name) + 1);
+                        strcpy(filename, event->name);
 
+                        /* Convert prefix to integer.*/
+                        client = (int) strtol(strtok(event->name, "."), NULL, 10);
 
-                        /********************************************FORK**********************************************/
-                        buffer = malloc((size_t) (strlen(common_dir) + strlen(event->name)) + 2);
-                        sprintf(buffer, "%s/%s", common_dir, event->name);
+                        /* Check if id is valid and is different from current client.*/
+                        if (client > 0 && client != id) {
 
-                        //if is file
-                        //if is *.id file
+                            /* Check file suffix to determine if it ends with '.id'.*/
+                            if (!strcmp(strtok(NULL, "\0"), "id")) {
 
-                        if (!stat(buffer, &s)) {
-                            if (!S_ISDIR(s.st_mode)) {
+                                if (HT_Insert(clientsHT, filename, filename, (void **) &fn)) {
 
-                                fprintf(stdout, "'%s' is a *.id file, now I try to fork my self!\n", buffer);
+                                    if ((buffer = malloc(lb))) {
+                                        sprintf(buffer, "%s/%s", common_dir, filename);
 
-                                /* Create sender.*/
-                                s_pid = fork();
-                                if (s_pid < 0) {
-                                    perror("fork");
-                                    exit(EXIT_FAILURE);
+                                        /* Create sender.*/
+                                        sender_pid = fork();
+                                        if (sender_pid < 0) {
+                                            perror("fork");
+                                            exit(EXIT_FAILURE);
+                                        }
+                                        if (sender_pid == 0) {
+                                            sender(client);
+                                            exit(EXIT_SUCCESS);
+                                        }
+
+                                        /* Create receiver.*/
+                                        receiver_pid = fork();
+                                        if (receiver_pid < 0) {
+                                            perror("fork");
+                                            exit(EXIT_FAILURE);
+                                        }
+                                        if (receiver_pid == 0) {
+                                            receiver(client);
+                                            exit(EXIT_SUCCESS);
+                                        }
+                                    }
+                                    free(buffer);
+                                } else {
+                                    fprintf(stderr, "\n---HT File: [%s] already exists!---\n", fn);
                                 }
-                                if (s_pid == 0) {
-                                    sender();
-                                    exit(EXIT_SUCCESS);
-                                }
-
-
-                                /* Create receiver.*/
-                                r_pid = fork();
-                                if (r_pid < 0) {
-                                    perror("fork");
-                                    exit(EXIT_FAILURE);
-                                }
-                                if (r_pid == 0) {
-                                    receiver();
-                                    exit(EXIT_SUCCESS);
-                                }
-
                             }
                         }
-
-                        free(buffer);
-                        /**********************************************************************************************/
-
+                        free(filename);
                     }
                 } else if (event->mask & IN_DELETE) {
                     if (!(event->mask & IN_ISDIR)) {
@@ -333,23 +439,27 @@ int main(int argc, char *argv[]) {
                         if (d_pid == 0) {
                             folder = strtok(event->name, ".");
                             if (!strcmp(strtok(NULL, "\0"), "id")) {
+
                                 /* Allocate space for target dir.*/
-                                buffer = malloc((size_t) (strlen(mirror_dir) + strlen(folder)) + 2);
-                                sprintf(buffer, "%s/%s", mirror_dir, folder);
-                                printf("\nbuffer: [%s]\n", buffer);
-                                rmdir(buffer);
-                                free(buffer);
-                                buffer = NULL;
+                                lb = (size_t) (strlen(mirror_dir) + strlen(folder)) + 2;
+                                if ((buffer = malloc(lb))) {
+                                    sprintf(buffer, "%s/%s", mirror_dir, folder);
+                                    printf("\nbuffer: [%s]\n", buffer);
+                                    rmdir(buffer);
+                                    free(buffer);
+                                    buffer = NULL;
+                                } else {
+                                    perror("malloc");
+                                    exit(EXIT_FAILURE);
+                                }
                             }
                             exit(EXIT_SUCCESS);
                         }
                     }
                 }
+                ev += EVENT_SIZE + event->len;
             }
-            ev += EVENT_SIZE + event->len;
         }
-
-        //TODO: call scan_for_ids() function.
     }
 
     /* Remove common_dir from watch list.*/
@@ -357,9 +467,7 @@ int main(int argc, char *argv[]) {
 
     /* Close the inotify instance.*/
     close(inotfd);
-
     fclose(fid);
-
     fclose(flog);
 
     return 0;

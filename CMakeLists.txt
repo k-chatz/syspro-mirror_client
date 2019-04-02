@@ -4,6 +4,6 @@ project(mirror_client C)
 set(CMAKE_C_STANDARD 99)
 
 
-add_executable(mirror_client main.c)
+add_executable(mirror_client main.c hash.c)
 
 target_link_libraries(mirror_client m)
