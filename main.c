@@ -20,6 +20,7 @@
 
 typedef void *pointer;
 
+Hashtable clientsHT = NULL;
 char *common_dir = NULL, *input_dir = NULL, *mirror_dir = NULL, *log_file = NULL;
 int id = 0;
 __pid_t sender_pid = 0, receiver_pid = 0;
@@ -193,23 +194,121 @@ void clientDestroy(char *fn) {
     free(fn);
 }
 
+/*
+ * Check */
+void create(char *filename) {
+    struct stat s = {0};
+    char *buffer = NULL, *f = NULL, *fn = NULL;
+    int client = 0;
+    size_t lb;
+
+    lb = strlen(common_dir) + strlen(filename) + 2;
+
+    /* Make a copy of filename.*/
+    f = malloc(sizeof(char) * strlen(filename) + 1);
+    strcpy(f, filename);
+
+    client = (int) strtol(strtok(filename, "."), NULL, 10);
+    if (client > 0 && client != id) {
+
+        /* Check file suffix to determine if it ends with '.id'.*/
+        if (!strcmp(strtok(NULL, "\0"), "id")) {
+
+            if (HT_Insert(clientsHT, f, f, (void **) &fn)) {
+                if ((buffer = malloc(lb))) {
+                    sprintf(buffer, "%s/%s", common_dir, f);
+                    if (!stat(buffer, &s)) {
+                        if (!S_ISDIR(s.st_mode)) {
+
+                            /* Create sender.*/
+                            sender_pid = fork();
+                            if (sender_pid < 0) {
+                                perror("fork");
+                                exit(EXIT_FAILURE);
+                            }
+                            if (sender_pid == 0) {
+                                sender(client);
+                                exit(EXIT_SUCCESS);
+                            }
+
+                            /* Create receiver.*/
+                            receiver_pid = fork();
+                            if (receiver_pid < 0) {
+                                perror("fork");
+                                exit(EXIT_FAILURE);
+                            }
+                            if (receiver_pid == 0) {
+                                receiver(client);
+                                exit(EXIT_SUCCESS);
+                            }
+                            sleep(1);
+                        }
+                    } else {
+                        perror("stat");
+                    }
+                    free(buffer);
+                }
+            } else {
+                fprintf(stderr, "\n---HT File: [%s] already exists!---\n", fn);
+            }
+        }
+    }
+}
+
+void destroy(char *filename) {
+    char *buffer = NULL, *f = NULL, *folder = NULL;
+    size_t lb = 0;
+    __pid_t d_pid = 0;
+
+    /* Make a copy of filename.*/
+    f = malloc(sizeof(char) * strlen(filename) + 1);
+    strcpy(f, filename);
+
+    folder = strtok(filename, ".");
+    if (!strcmp(strtok(NULL, "\0"), "id")) {
+
+        d_pid = fork();
+        if (d_pid < 0) {
+            perror("fork");
+            exit(EXIT_FAILURE);
+        }
+
+        if (d_pid == 0) {
+
+            /* Allocate space for target dir.*/
+            lb = (size_t) (strlen(mirror_dir) + strlen(folder)) + 2;
+            if ((buffer = malloc(lb))) {
+                sprintf(buffer, "%s/%s", mirror_dir, folder);
+                printf("\nbuffer: [%s]\n", buffer);
+                rmdir(buffer);
+                execlp("rm", "-r", "-f", buffer, NULL);
+                perror("execlp");
+                free(buffer);
+            } else {
+                perror("malloc");
+                exit(EXIT_FAILURE);
+            }
+            exit(EXIT_SUCCESS);
+        }
+    }
+
+    free(f);
+}
 
 int main(int argc, char *argv[]) {
     char event_buffer[EVENT_BUF_LEN], *buffer = NULL;
     unsigned long int buffer_size = 0;
-    FILE *fid = NULL, *flog = NULL;
-    int inotfd = 0, ev, wd;
+    FILE *fd_common_dir = NULL, *fd_log_file = NULL;
+    int fd_inotify = 0, ev, wd;
     struct stat s = {0};
     ssize_t bytes;
     static struct sigaction act;
-    __pid_t d_pid = 0;
-    char *folder = NULL;
-    int client = 0;
+    size_t lb = 0;
+
     struct dirent *d = NULL;
     DIR *dir = NULL;
-    size_t lb;
-    Hashtable clientsHT = NULL;
-    char *fn = NULL;
+
+
     char *filename = NULL;
     struct inotify_event *event = NULL;
 
@@ -258,8 +357,8 @@ int main(int argc, char *argv[]) {
             fprintf(stderr, "'%s' already exists!\n", buffer);
             exit(EXIT_FAILURE);
         } else {
-            fid = fopen(buffer, "w");
-            fprintf(fid, "%d", (int) getpid());
+            fd_common_dir = fopen(buffer, "w");
+            fprintf(fd_common_dir, "%d", (int) getpid());
         }
         free(buffer);
 
@@ -274,12 +373,12 @@ int main(int argc, char *argv[]) {
         fprintf(stderr, "'%s' file already exists!\n", log_file);
         exit(EXIT_FAILURE);
     } else {
-        flog = fopen(log_file, "w");
+        fd_log_file = fopen(log_file, "w");
     }
 
     /* Initialize inotify.*/
-    inotfd = inotify_init();
-    if (inotfd < 0) {
+    fd_inotify = inotify_init();
+    if (fd_inotify < 0) {
         perror("i-notify_init");
     }
 
@@ -290,7 +389,7 @@ int main(int argc, char *argv[]) {
     sigaction(SIGQUIT, &act, NULL);
 
     /* Add common_dir at watch list to detect changes.*/
-    wd = inotify_add_watch(inotfd, common_dir, IN_CREATE | IN_DELETE);
+    wd = inotify_add_watch(fd_inotify, common_dir, IN_CREATE | IN_DELETE);
 
     /*Initialize clients hashtable*/
     HT_Init(
@@ -310,64 +409,14 @@ int main(int argc, char *argv[]) {
             if (!strcmp(d->d_name, ".") || !strcmp(d->d_name, "..")) {
                 continue;
             }
-            lb = strlen(common_dir) + strlen(d->d_name) + 2;
-
-            /* Make a copy of filename.*/
-            filename = malloc(sizeof(char) * strlen(d->d_name) + 1);
-            strcpy(filename, d->d_name);
-
-            client = (int) strtol(strtok(d->d_name, "."), NULL, 10);
-            if (client > 0 && client != id) {
-
-                /* Check file suffix to determine if it ends with '.id'.*/
-                if (!strcmp(strtok(NULL, "\0"), "id")) {
-
-                    if (HT_Insert(clientsHT, filename, filename, (void **) &fn)) {
-                        if ((buffer = malloc(lb))) {
-                            sprintf(buffer, "%s/%s", common_dir, filename);
-                            if (!stat(buffer, &s)) {
-                                if (!S_ISDIR(s.st_mode)) {
-
-                                    /* Create sender.*/
-                                    sender_pid = fork();
-                                    if (sender_pid < 0) {
-                                        perror("fork");
-                                        exit(EXIT_FAILURE);
-                                    }
-                                    if (sender_pid == 0) {
-                                        sender(client);
-                                        exit(EXIT_SUCCESS);
-                                    }
-
-                                    /* Create receiver.*/
-                                    receiver_pid = fork();
-                                    if (receiver_pid < 0) {
-                                        perror("fork");
-                                        exit(EXIT_FAILURE);
-                                    }
-                                    if (receiver_pid == 0) {
-                                        receiver(client);
-                                        exit(EXIT_SUCCESS);
-                                    }
-                                    sleep(1);
-                                }
-                            } else {
-                                perror("stat");
-                            }
-                            free(buffer);
-                        }
-                    } else {
-                        fprintf(stderr, "\n---HT File: [%s] already exists!---\n", fn);
-                    }
-                }
-            }
+            create(d->d_name);
         }
-        printf("\n::::::::::::::::::::::::::::::::::::::::::::::\n\n");
         closedir(dir);
     }
+    printf("\n::::::::::::::::::::::::::::::::::::::::::::::\n\n");
 
     while (!quit) {
-        bytes = read(inotfd, event_buffer, EVENT_BUF_LEN);
+        bytes = read(fd_inotify, event_buffer, EVENT_BUF_LEN);
         if (bytes < 0) {
             perror("read i-notify event");
         }
@@ -377,84 +426,11 @@ int main(int argc, char *argv[]) {
             if (event->len) {
                 if (event->mask & IN_CREATE) {
                     if (!(event->mask & IN_ISDIR)) {
-                        //printf("File: [%s] created.\n", event->name);
-                        lb = (size_t) (strlen(common_dir) + strlen(event->name)) + 2;
-
-                        /* Make a copy of filename.*/
-                        filename = malloc(sizeof(char) * strlen(event->name) + 1);
-                        strcpy(filename, event->name);
-
-                        /* Convert prefix to integer.*/
-                        client = (int) strtol(strtok(event->name, "."), NULL, 10);
-
-                        /* Check if id is valid and is different from current client.*/
-                        if (client > 0 && client != id) {
-
-                            /* Check file suffix to determine if it ends with '.id'.*/
-                            if (!strcmp(strtok(NULL, "\0"), "id")) {
-
-                                if (HT_Insert(clientsHT, filename, filename, (void **) &fn)) {
-
-                                    if ((buffer = malloc(lb))) {
-                                        sprintf(buffer, "%s/%s", common_dir, filename);
-
-                                        /* Create sender.*/
-                                        sender_pid = fork();
-                                        if (sender_pid < 0) {
-                                            perror("fork");
-                                            exit(EXIT_FAILURE);
-                                        }
-                                        if (sender_pid == 0) {
-                                            sender(client);
-                                            exit(EXIT_SUCCESS);
-                                        }
-
-                                        /* Create receiver.*/
-                                        receiver_pid = fork();
-                                        if (receiver_pid < 0) {
-                                            perror("fork");
-                                            exit(EXIT_FAILURE);
-                                        }
-                                        if (receiver_pid == 0) {
-                                            receiver(client);
-                                            exit(EXIT_SUCCESS);
-                                        }
-                                    }
-                                    free(buffer);
-                                } else {
-                                    fprintf(stderr, "\n---HT File: [%s] already exists!---\n", fn);
-                                }
-                            }
-                        }
-                        free(filename);
+                        create(event->name);
                     }
                 } else if (event->mask & IN_DELETE) {
                     if (!(event->mask & IN_ISDIR)) {
-                        printf("File: [%s] deleted.\n", event->name);
-                        d_pid = fork();
-                        if (d_pid < 0) {
-                            perror("fork");
-                            exit(EXIT_FAILURE);
-                        }
-                        if (d_pid == 0) {
-                            folder = strtok(event->name, ".");
-                            if (!strcmp(strtok(NULL, "\0"), "id")) {
-
-                                /* Allocate space for target dir.*/
-                                lb = (size_t) (strlen(mirror_dir) + strlen(folder)) + 2;
-                                if ((buffer = malloc(lb))) {
-                                    sprintf(buffer, "%s/%s", mirror_dir, folder);
-                                    printf("\nbuffer: [%s]\n", buffer);
-                                    rmdir(buffer);
-                                    free(buffer);
-                                    buffer = NULL;
-                                } else {
-                                    perror("malloc");
-                                    exit(EXIT_FAILURE);
-                                }
-                            }
-                            exit(EXIT_SUCCESS);
-                        }
+                        destroy(event->name);
                     }
                 }
                 ev += EVENT_SIZE + event->len;
@@ -463,12 +439,14 @@ int main(int argc, char *argv[]) {
     }
 
     /* Remove common_dir from watch list.*/
-    inotify_rm_watch(inotfd, wd);
+    inotify_rm_watch(fd_inotify, wd);
 
-    /* Close the inotify instance.*/
-    close(inotfd);
-    fclose(fid);
-    fclose(flog);
+    /* Close the i-notify instance.*/
+    close(fd_inotify);
+
+    fclose(fd_common_dir);
+
+    fclose(fd_log_file);
 
     return 0;
 }
