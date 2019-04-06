@@ -1,5 +1,16 @@
 #!/bin/bash
 
+generate_random_string() {
+    string="";
+    pattern="abcdefghijklwricoalc234019495023";
+	patternLength=`expr length ${pattern}`;
+    stringLength=`expr $RANDOM % 8 + 1`
+    for ((sl=0; sl <= stringLength; sl++)) do
+        ch=`expr $RANDOM % ${patternLength} + 1`;
+        string+=`expr substr ${pattern} ${ch} 1`;
+    done
+}
+
 validate_args() {
     if [[  $# -ge 4 ]]; then
     shift
@@ -23,41 +34,22 @@ echo "Number of arguments: [$#]"
 
 validate_args $@
 
-# Random characters.
-x="abcdefghijklwricoalc234019495023";
+path=$1;
 
-# Make input_dir recursively.
-mkdir -p $1;
+for ((i = 0; i < $3; i++))
+do
+    generate_random_string
 
-ch="";
-if [[ $? -eq 0 ]]; then
-    cd $1;
-	strlen=`expr length "$x"`;
-    characters=`expr $RANDOM % 8 + 1`;
-    for ((i=0; i <= $characters; i++)) do
-        c=`expr $RANDOM % $strlen + 1`;
-        ch+=`expr substr $x $c 1`;
-        echo "$i: $ch";
-    done
-    echo $ch
-fi
+    lv=`expr ${i} % $4`
 
+    if [[ ${lv} > 0 ]]; then
+        path="${path}/${string}"
+    else
+        path="$1/${string}"
+    fi
 
-#echo $(($RANDOM % 2))
+    echo "mkdir -p ${path}"
 
-#rand=$(echo $RANDOM)
-#echo $rand
-#
-#string=''
-#
-# for i in {0..1}
-#  do
-# string+=$(printf "%c" 114 )
-#
-# done
-#echo $string
+    mkdir -p ${path}
 
-
-# if [[ "$?" != 0 ]]; then
-#        echo "can't acquire lock!";
-# fi
+done
