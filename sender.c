@@ -188,5 +188,7 @@ void sender(int receiverId) {
     /* Close fifo*/
     close(fd_fifo);
 
+    unlink(fifo);
+
     free(fifo);
 }

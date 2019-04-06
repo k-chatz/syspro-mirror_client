@@ -33,7 +33,6 @@ void receiver(int senderId) {
         perror("can't create fifo");
     }
 
-
     alarm(30);
 
     fd_fifo = open(fifo, O_RDONLY);
@@ -68,13 +67,13 @@ void receiver(int senderId) {
 
         alarm(0);
 
-        lb = strlen(mirror_dir) + fileNameLength + 2;
+        lb = strlen(mirror_dir) + digits(senderId) + fileNameLength + 3;
 
         if (!(path = malloc(lb))) {
             perror("malloc r_path");
         }
 
-        snprintf(path, lb, "%s/%s", mirror_dir, fileName);
+        snprintf(path, lb, "%s/%d/%s", mirror_dir, senderId, fileName);
 
         /* Make dirs if not exists.*/
         pch = strchr(path, '/');
@@ -135,5 +134,8 @@ void receiver(int senderId) {
     }
 
     close(fd_fifo);
+
+    unlink(fifo);
+
     free(fifo);
 }
