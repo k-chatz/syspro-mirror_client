@@ -1,7 +1,7 @@
 #!/bin/bash
 
 validate_args() {
-    if [  $# -ge 4 ]; then
+    if [[  $# -ge 4 ]]; then
     shift
         for str
             do
@@ -17,6 +17,8 @@ validate_args() {
     fi
 }
 
+#MAIN
+
 echo "Number of arguments: [$#]"
 
 validate_args $@
@@ -24,3 +26,21 @@ validate_args $@
 mkdir $1; cd $1;
 
 
+#echo $(($RANDOM % 2))
+
+#rand=$(echo $RANDOM)
+#echo $rand
+#
+#string=''
+#
+# for i in {0..1}
+#  do
+# string+=$(printf "%c" 114 )
+#
+# done
+#echo $string
+
+
+# if [[ "$?" != 0 ]]; then
+#        echo "can't acquire lock!";
+# fi

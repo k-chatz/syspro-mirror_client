@@ -274,7 +274,7 @@ void destroy(char *filename) {
 
 int main(int argc, char *argv[]) {
     char event_buffer[EVENT_BUF_LEN], *buffer = NULL;
-    FILE *fd_common_dir = NULL, *fd_log_file = NULL;
+    FILE *file_id = NULL, *file_log = NULL;
     int fd_inotify = 0, ev, wd;
     struct stat s = {0};
     ssize_t bytes;
@@ -328,8 +328,9 @@ int main(int argc, char *argv[]) {
             fprintf(stderr, "'%s' already exists!\n", buffer);
             exit(EXIT_FAILURE);
         } else {
-            fd_common_dir = fopen(buffer, "w");
-            fprintf(fd_common_dir, "%d", (int) getpid());
+            file_id = fopen(buffer, "w");
+            fprintf(file_id, "%d", (int) getpid());
+            fclose(file_id);
         }
         free(buffer);
 
@@ -343,7 +344,7 @@ int main(int argc, char *argv[]) {
         fprintf(stderr, "'%s' file already exists!\n", log_file);
         exit(EXIT_FAILURE);
     } else {
-        fd_log_file = fopen(log_file, "w");
+        file_log = fopen(log_file, "w");
     }
 
     /* Initialize inotify.*/
@@ -415,9 +416,6 @@ int main(int argc, char *argv[]) {
     /* Close the i-notify instance.*/
     close(fd_inotify);
 
-    fclose(fd_common_dir);
-
-    fclose(fd_log_file);
-
+    fclose(file_log);
     return 0;
 }

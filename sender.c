@@ -48,7 +48,6 @@ void rec_cp(int fd_fifo, const char *path) {
                 fileName = r_path + strlen(input_dir) + 1;
 
                 if (S_ISDIR(s.st_mode)) {
-                    printf("directory: [%s], size: [%d]\n", fileName, (int) s.st_size);
 
                     fileNameLength = (unsigned short int) strlen(fileName) + 1;
 
@@ -80,7 +79,6 @@ void rec_cp(int fd_fifo, const char *path) {
                     rec_cp(fd_fifo, r_path);
 
                 } else if (S_ISREG(s.st_mode)) {
-                    printf("file: [%s], size: [%d]\n", fileName, (int) s.st_size);
 
                     fileNameLength = (unsigned short int) strlen(fileName);
 
@@ -104,7 +102,7 @@ void rec_cp(int fd_fifo, const char *path) {
 
                     /* Open file*/
                     if ((fd_file = open(r_path, O_RDONLY)) < 0) {
-                        printf("Open call fail");
+                        perror("Open call fail");
                     }
 
                     alarm(30);
@@ -157,8 +155,6 @@ void sender(int receiverId) {
 
     /* Construct fifo filename*/
     sprintf(fifo, "%s/id%d_to_id%d.fifo", common_dir, id, receiverId);
-
-    printf("FIFO: [%s]\n", fifo);
 
     /* Create fifo*/
     if ((mkfifo(fifo, S_IRUSR | S_IWUSR | S_IXUSR) < 0) && (errno != EEXIST)) {
