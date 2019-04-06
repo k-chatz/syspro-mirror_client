@@ -405,27 +405,25 @@ void sig_int_quit_action(int signal) {
     rmdir(mirror_dir);
 
     lb = (size_t) (strlen(common_dir) + digits(id)) + 5;
-    if ((buffer = malloc(lb))) {
-
-        sprintf(buffer, "%s/%d.id", common_dir, id);
-
-        if (unlink(buffer) < 0) {
-            perror(buffer);
-        }
-
-        if (receiver_pid) {
-            kill(receiver_pid, SIGUSR2);
-        }
-
-        if (sender_pid) {
-            kill(sender_pid, SIGUSR2);
-        }
-
-        free(buffer);
-    } else {
+    if (!(buffer = malloc(lb))) {
         perror("malloc");
     }
 
+    sprintf(buffer, "%s/%d.id", common_dir, id);
+
+    if (unlink(buffer) < 0) {
+        perror(buffer);
+    }
+
+    if (receiver_pid) {
+        kill(receiver_pid, SIGUSR2);
+    }
+
+    if (sender_pid) {
+        kill(sender_pid, SIGUSR2);
+    }
+
+    free(buffer);
 
     quit = true;
 }
@@ -480,39 +478,46 @@ void create(char *filename) {
         if (!strcmp(strtok(NULL, "\0"), "id")) {
 
             if (HT_Insert(clientsHT, f, f, (void **) &fn)) {
-                if ((buffer = malloc(lb))) {
-                    sprintf(buffer, "%s/%s", common_dir, f);
-                    if (!stat(buffer, &s)) {
-                        if (!S_ISDIR(s.st_mode)) {
 
-                            /* Create sender.*/
-                            sender_pid = fork();
-                            if (sender_pid < 0) {
-                                perror("fork");
-                                exit(EXIT_FAILURE);
-                            }
-                            if (sender_pid == 0) {
-                                sender(client);
-                                exit(EXIT_SUCCESS);
-                            }
-
-                            /* Create receiver.*/
-                            receiver_pid = fork();
-                            if (receiver_pid < 0) {
-                                perror("fork");
-                                exit(EXIT_FAILURE);
-                            }
-                            if (receiver_pid == 0) {
-                                receiver(client);
-                                exit(EXIT_SUCCESS);
-                            }
-                            sleep(1);
-                        }
-                    } else {
-                        perror("stat");
-                    }
-                    free(buffer);
+                if (!(buffer = malloc(lb))) {
+                    perror("malloc");
                 }
+
+                /* Construct id file*/
+                sprintf(buffer, "%s/%s", common_dir, f);
+
+                if (!stat(buffer, &s)) {
+                    if (!S_ISDIR(s.st_mode)) {
+
+                        /* Create sender.*/
+                        sender_pid = fork();
+                        if (sender_pid < 0) {
+                            perror("fork");
+                            exit(EXIT_FAILURE);
+                        }
+                        if (sender_pid == 0) {
+                            sender(client);
+                            exit(EXIT_SUCCESS);
+                        }
+
+                        /* Create receiver.*/
+                        receiver_pid = fork();
+                        if (receiver_pid < 0) {
+                            perror("fork");
+                            exit(EXIT_FAILURE);
+                        }
+                        if (receiver_pid == 0) {
+                            receiver(client);
+                            exit(EXIT_SUCCESS);
+                        }
+
+                        sleep(1);
+                    }
+                } else {
+                    perror("stat");
+                }
+                free(buffer);
+
             } else {
                 fprintf(stderr, "\n---HT File: [%s] already exists!---\n", fn);
             }
@@ -544,17 +549,18 @@ void destroy(char *filename) {
 
             /* Allocate space for target dir.*/
             lb = (size_t) (strlen(mirror_dir) + strlen(folder)) + 2;
-            if ((buffer = malloc(lb))) {
-                sprintf(buffer, "%s/%s", mirror_dir, folder);
-                printf("\nbuffer: [%s]\n", buffer);
-                rmdir(buffer);
-                execlp("rm", "-r", "-f", buffer, NULL);
-                perror("execlp");
-                free(buffer);
-            } else {
+
+            if (!(buffer = malloc(lb))) {
                 perror("malloc");
                 exit(EXIT_FAILURE);
             }
+
+            sprintf(buffer, "%s/%s", mirror_dir, folder);
+            printf("\nbuffer: [%s]\n", buffer);
+            rmdir(buffer);
+            execlp("rm", "-r", "-f", buffer, NULL);
+            perror("execlp");
+            free(buffer);
         }
     }
     free(f);
