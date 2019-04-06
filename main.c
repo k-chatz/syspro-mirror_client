@@ -12,20 +12,25 @@
 #include <dirent.h>
 #include <math.h>
 #include <stdbool.h>
+#include <fcntl.h>
 #include "hash.h"
 
 #define EVENT_SIZE (sizeof(struct inotify_event))
 #define EVENT_BUF_LEN (1024 * (EVENT_SIZE + 16))
+
 #define TRIES 3
 
 typedef void *pointer;
 
 Hashtable clientsHT = NULL;
 char *common_dir = NULL, *input_dir = NULL, *mirror_dir = NULL, *log_file = NULL;
+unsigned long int buffer_size = 0;
 int id = 0;
 __pid_t sender_pid = 0, receiver_pid = 0;
 bool quit = false;
 
+/**
+ * Calculate number of digits of specific int.*/
 unsigned int digits(int n) {
     if (n == 0) return 1;
     return (unsigned int) floor(log10(abs(n))) + 1;
@@ -36,6 +41,8 @@ void wrongOptionValue(char *opt, char *val) {
     exit(EXIT_FAILURE);
 }
 
+/**
+ * Read options from command line*/
 void readOptions(
         int argc,
         char **argv,
@@ -91,54 +98,221 @@ void readOptions(
     }
 }
 
-void sender(int receiverId) {
-    char *buffer = NULL;
-    size_t lb = 0;
-    printf("\nSENDER PID: [%d], PARENT PID: [%d]\n", getpid(), getppid());
-    lb = (size_t) (strlen(common_dir) + digits(id) + digits(receiverId) + 15);
-    if ((buffer = malloc(lb))) {
-        sprintf(buffer, "%s/id%d_to_id%d.fifo", common_dir, id, receiverId);
-        printf("FIFO: [%s]\n", buffer);
-        if (mkfifo(buffer, 0755)) {
-            perror(buffer);
+/**
+ * Read directory & subdirectories recursively*/
+void rec_cp(int fd_fifo, const char *path) {
+    struct dirent *d = NULL;
+    char *r_path = NULL;
+    DIR *dir = NULL;
+    size_t lb;
+
+    int fileNameLength = 0, fd_file = 0;
+    unsigned int fileSize = 0;
+    struct stat s = {0};
+    char buffer[buffer_size];
+    ssize_t n = 0;
+    char *dirName = NULL;
+    char *fileName = NULL;
+
+    if ((dir = opendir(path))) {
+        while ((d = readdir(dir))) {
+
+            if (!strcmp(d->d_name, ".") || !strcmp(d->d_name, "..")) {
+                continue;
+            }
+
+            lb = strlen(path) + strlen(d->d_name) + 2;
+
+            if (!(r_path = malloc(lb))) {
+                perror("malloc");
+            }
+
+            /* Construct real path.*/
+            snprintf(r_path, lb, "%s/%s", path, d->d_name);
+
+            /* Get file statistics*/
+            if (!stat(r_path, &s)) {
+
+                fileSize = (unsigned int) s.st_size;
+
+                fileName = r_path + strlen(input_dir) + 1;
+
+                if (S_ISDIR(s.st_mode)) {
+                    printf("directory: [%s], size: [%d]\n", fileName, (int) s.st_size);
+
+                    fileNameLength = (unsigned short int) strlen(fileName) + 1;
+
+                    /* Write length of filename/directory to pipe.*/
+                    alarm(30);
+                    if (write(fd_fifo, &fileNameLength, sizeof(unsigned short int)) < 0) {
+                        perror("Error in Writing");
+                    }
+                    alarm(0);
+
+
+                    if (!(dirName = malloc((size_t) fileNameLength))) {
+                        perror("malloc");
+                    }
+
+                    strcpy(dirName, fileName);
+                    strcat(dirName, "/");
+
+                    alarm(30);
+
+                    /* Write relative path of directory to pipe.*/
+                    if (write(fd_fifo, dirName, (size_t) fileNameLength) < 0) {
+                        perror("Error in Writing");
+                    }
+
+                    alarm(0);
+
+                    free(dirName);
+                    rec_cp(fd_fifo, r_path);
+
+                } else if (S_ISREG(s.st_mode)) {
+                    printf("file: [%s], size: [%d]\n", fileName, (int) s.st_size);
+
+                    fileNameLength = (unsigned short int) strlen(fileName);
+
+                    alarm(30);
+
+                    /* Write length of filename to pipe.*/
+                    if (write(fd_fifo, &fileNameLength, sizeof(unsigned short int)) < 0) {
+                        perror("Error in Writing");
+                    }
+
+                    alarm(0);
+
+                    alarm(30);
+
+                    /* Write relative path to pipe.*/
+                    if (write(fd_fifo, fileName, strlen(fileName)) < 0) {
+                        perror("Error in Writing");
+                    }
+
+                    alarm(0);
+
+                    /* Open file*/
+                    if ((fd_file = open(r_path, O_RDONLY)) < 0) {
+                        printf("Open call fail");
+                    }
+
+                    alarm(30);
+
+                    /* Write file size.*/
+                    if (write(fd_fifo, &fileSize, sizeof(unsigned int)) < 0) {
+                        perror("Error in Writing");
+                    }
+
+                    alarm(0);
+
+                    if (fileSize > 0) {
+                        do {
+                            if ((n = read(fd_file, buffer, buffer_size)) > 0) {
+
+                                alarm(30);
+
+                                /* Write file.*/
+                                if (write(fd_fifo, buffer, (size_t) n) < 0) {
+                                    perror("Error in Writing");
+                                }
+
+                                alarm(0);
+
+                            }
+                        } while (n == buffer_size);
+                    }
+                }
+            } else {
+                perror("File not found");
+            }
+            free(r_path);
         }
-
-        //TODO: Open fifo
-
-        //TODO: Read fifo
-
-        //TODO: Close fifo
-
-        free(buffer);
-    } else {
-        perror("malloc");
+        closedir(dir);
     }
 }
 
+/**
+ * Sender child*/
+void sender(int receiverId) {
+    unsigned short int fileNameLength = 0;
+    char *fifo = NULL;
+    int fd_fifo = 0;
+
+    printf("\nSENDER PID: [%d], PARENT PID: [%d]\n", getpid(), getppid());
+
+    if (!(fifo = malloc((strlen(common_dir) + digits(id) + digits(receiverId) + 15)))) {
+        perror("malloc");
+    }
+
+    sprintf(fifo, "%s/id%d_to_id%d.fifo", common_dir, id, receiverId);
+
+    printf("FIFO: [%s]\n", fifo);
+
+    /* Create fifo*/
+    if ((mkfifo(fifo, S_IRUSR | S_IWUSR | S_IXUSR) < 0) && (errno != EEXIST)) {
+        perror("can't create fifo");
+    }
+
+    alarm(30);
+
+    /* Open fifo*/
+    if ((fd_fifo = open(fifo, O_WRONLY)) < 0) {
+        perror("Open fifo error");
+        exit(1);
+    }
+
+    alarm(0);
+
+    /* Write to fifo for each file or folder.*/
+    rec_cp(fd_fifo, input_dir);
+
+    fileNameLength = 0;
+
+    alarm(30);
+
+    if (write(fd_fifo, &fileNameLength, sizeof(unsigned short int)) < 0) {
+        perror("Error in Writing");
+        exit(2);
+    }
+
+    alarm(0);
+
+    /* Close fifo*/
+    close(fd_fifo);
+
+    free(fifo);
+}
+
+/**
+ * Receiver child*/
 void receiver(int senderId) {
     char *buffer = NULL;
     size_t lb = 0;
     printf("\nRECEIVER PID: [%d], PARENT PID: [%d]\n", getpid(), getppid());
     lb = (size_t) (strlen(common_dir) + digits(senderId) + digits(id) + 15);
-    if ((buffer = malloc(lb))) {
-        sprintf(buffer, "%s/id%d_to_id%d.fifo", common_dir, senderId, id);
-        printf("FIFO: [%s]\n", buffer);
-        if (mkfifo(buffer, 0755)) {
-            perror(buffer);
-        }
-
-        //TODO: Open fifo
-
-        //TODO: Read fifo
-
-        //TODO: Close fifo
-
-        free(buffer);
-    } else {
+    if (!(buffer = malloc(lb))) {
         perror("malloc");
     }
+
+    sprintf(buffer, "%s/id%d_to_id%d.fifo", common_dir, senderId, id);
+    printf("FIFO: [%s]\n", buffer);
+    if (mkfifo(buffer, 0755)) {
+        perror(buffer);
+    }
+
+    //TODO: Open fifo
+
+    //TODO: Read fifo
+
+    //TODO: Close fifo
+
+    free(buffer);
+
 }
 
+/**
+ * Interupt or quit action*/
 void sig_int_quit_action(int signal) {
     char *buffer = NULL;
     size_t lb = 0;
@@ -173,14 +347,20 @@ void sig_int_quit_action(int signal) {
     quit = true;
 }
 
+/**
+ * @Callback HT Create*/
 char *clientCreate(char *fn) {
     return fn;
 }
 
+/**
+ * @Callback HT Compare*/
 int clientCompare(char *fn1, char *fn2) {
     return strcmp(fn1, fn2);
 }
 
+/**
+ * @Callback HT Hash*/
 unsigned long int clientHash(char *key, unsigned long int capacity) {
     int i, sum = 0;
     size_t keyLength = strlen(key);
@@ -190,11 +370,13 @@ unsigned long int clientHash(char *key, unsigned long int capacity) {
     return sum % capacity;
 }
 
+/**
+ * @Callback HT Destroy*/
 void clientDestroy(char *fn) {
     free(fn);
 }
 
-/*
+/**
  * Check */
 void create(char *filename) {
     struct stat s = {0};
@@ -255,6 +437,8 @@ void create(char *filename) {
     }
 }
 
+/**
+ * Destroy child*/
 void destroy(char *filename) {
     char *buffer = NULL, *f = NULL, *folder = NULL;
     size_t lb = 0;
@@ -288,30 +472,22 @@ void destroy(char *filename) {
                 perror("malloc");
                 exit(EXIT_FAILURE);
             }
-            exit(EXIT_SUCCESS);
         }
     }
-
     free(f);
 }
 
 int main(int argc, char *argv[]) {
     char event_buffer[EVENT_BUF_LEN], *buffer = NULL;
-    unsigned long int buffer_size = 0;
     FILE *fd_common_dir = NULL, *fd_log_file = NULL;
     int fd_inotify = 0, ev, wd;
     struct stat s = {0};
     ssize_t bytes;
     static struct sigaction act;
     size_t lb = 0;
-
     struct dirent *d = NULL;
     DIR *dir = NULL;
-
-
-    char *filename = NULL;
     struct inotify_event *event = NULL;
-
 
     printf("pid: %d\n", getpid());
 
@@ -367,7 +543,6 @@ int main(int argc, char *argv[]) {
         exit(EXIT_FAILURE);
     }
 
-
     /* Check if log_file file already exists.*/
     if (!stat(log_file, &s)) {
         fprintf(stderr, "'%s' file already exists!\n", log_file);
@@ -391,7 +566,7 @@ int main(int argc, char *argv[]) {
     /* Add common_dir at watch list to detect changes.*/
     wd = inotify_add_watch(fd_inotify, common_dir, IN_CREATE | IN_DELETE);
 
-    /*Initialize clients hashtable*/
+    /* Initialize clients hashtable*/
     HT_Init(
             &clientsHT,
             100,
@@ -402,8 +577,7 @@ int main(int argc, char *argv[]) {
             (unsigned long (*)(pointer)) clientDestroy
     );
 
-    printf("\n::::::::::::::::::::::::::::::::::::::::::::::::::\n");
-    // Search for not processed clients.
+    /* Search for not processed clients.*/
     if ((dir = opendir(common_dir))) {
         while ((d = readdir(dir))) {
             if (!strcmp(d->d_name, ".") || !strcmp(d->d_name, "..")) {
@@ -413,7 +587,8 @@ int main(int argc, char *argv[]) {
         }
         closedir(dir);
     }
-    printf("\n::::::::::::::::::::::::::::::::::::::::::::::\n\n");
+
+    printf("\n:READ EVENTS:\n\n");
 
     while (!quit) {
         bytes = read(fd_inotify, event_buffer, EVENT_BUF_LEN);
@@ -431,6 +606,7 @@ int main(int argc, char *argv[]) {
                 } else if (event->mask & IN_DELETE) {
                     if (!(event->mask & IN_ISDIR)) {
                         destroy(event->name);
+                        //quit = true;
                     }
                 }
                 ev += EVENT_SIZE + event->len;
