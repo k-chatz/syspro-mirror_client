@@ -29,33 +29,40 @@ validate_args() {
 
 #MAIN
 
-echo "Number of arguments: [$#]"
-
 validate_args $@
 
-path=$1;
+path=${1};
+files=${2};
+levels=${4}
+dirs=${3}
 
 mkdir -p ${path}
 
 declare -a paths=()
 
-for ((i = 0; i < $3; i++)); do
+# Make dirs.
+for ((i = 0; i < dirs; i++)); do
     generate_random_string
-    lv=`expr ${i} % $4`;
-    if [[ ${lv} > 0 ]]; then
+
+    if [[ ${levels} -le 0 ]]; then
+       ((levels=1))
+    fi
+
+    depth=`expr ${i} % ${levels}`;
+
+    if [[ ${depth} > 0 ]]; then
         path="${path}/${string}"
     else
         path="$1/${string}"
     fi
-    echo "mkdir -p ${path}"
+
+    #echo "mkdir -p ${path}"
     mkdir -p ${path}
     paths+=(${path})
 done
 
-files=$2;
-
+# Generate files
 while [[ ${files} -gt 0 ]]; do
-
     for p in "${paths[@]}"; do
         generate_random_string
         if [[ ${files} > 0 ]]; then
@@ -66,5 +73,4 @@ while [[ ${files} -gt 0 ]]; do
             break;
         fi
     done # for p in "${paths[@]}"
-
 done #while [[ ${files} -gt 0 ]]
