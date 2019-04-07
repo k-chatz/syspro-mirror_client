@@ -1,14 +1,17 @@
 #!/bin/bash
 
 generate_random_string() {
-    string="";
-    pattern="abcdefghijklwricoalc234019495023";
-	patternLength=`expr length ${pattern}`;
-    stringLength=`expr $RANDOM % 8 + 1`
-    for ((sl=0; sl <= stringLength; sl++)) do
-        ch=`expr $RANDOM % ${patternLength} + 1`;
-        string+=`expr substr ${pattern} ${ch} 1`;
-    done
+    if [[  $# -ge 1 ]]; then
+        maxStringLength=$1
+        string="";
+        pattern="abcdefghijklwricoalc234019495023";
+        patternLength=`expr length ${pattern}`;
+        stringLength=`expr $RANDOM % ${maxStringLength} + 1`
+        for ((sl=0; sl <= stringLength; sl++)) do
+            ch=`expr $RANDOM % ${patternLength} + 1`;
+            string+=`expr substr ${pattern} ${ch} 1`;
+        done
+    fi
 }
 
 validate_args() {
@@ -36,13 +39,15 @@ files=${2};
 levels=${4}
 dirs=${3}
 
+rm -rf ${path}
+
 mkdir -p ${path}
 
 declare -a paths=()
 
 # Make dirs.
 for ((i = 0; i < dirs; i++)); do
-    generate_random_string
+    generate_random_string 8
 
     if [[ ${levels} -le 0 ]]; then
        ((levels=1))
@@ -64,10 +69,12 @@ done
 # Generate files
 while [[ ${files} -gt 0 ]]; do
     for p in "${paths[@]}"; do
-        generate_random_string
+        generate_random_string 8
         if [[ ${files} > 0 ]]; then
-            echo "files: ${files} touch ${p}${string}"
-            touch "${p}${string}"
+            echo "Create file: ${p}${string}"
+            filename=${string}
+            echo filename >> "${p}${string}"
+            head -c `expr $RANDOM % 128000 + 1` /dev/urandom >> "${p}${string}"
             ((files--))
         else
             break;
