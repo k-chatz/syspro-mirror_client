@@ -14,14 +14,13 @@ generate_random_string() {
 validate_args() {
     if [[  $# -ge 4 ]]; then
     shift
-        for str
-            do
+        for str; do
             if (! [[ ${1} =~ ^[0-9]+$ ]] ); then
                 (>&2 echo "Error: Invalid arguments!")
                 exit 1
             fi
             shift
-            done
+        done
     else
         (>&2 echo "Error: Too few arguments!")
         exit 1
@@ -36,20 +35,36 @@ validate_args $@
 
 path=$1;
 
-for ((i = 0; i < $3; i++))
-do
+mkdir -p ${path}
+
+declare -a paths=()
+
+for ((i = 0; i < $3; i++)); do
     generate_random_string
-
-    lv=`expr ${i} % $4`
-
+    lv=`expr ${i} % $4`;
     if [[ ${lv} > 0 ]]; then
         path="${path}/${string}"
     else
         path="$1/${string}"
     fi
-
     echo "mkdir -p ${path}"
-
     mkdir -p ${path}
-
+    paths+=(${path})
 done
+
+files=$2;
+
+while [[ ${files} -gt 0 ]]; do
+
+    for p in "${paths[@]}"; do
+        generate_random_string
+        if [[ ${files} > 0 ]]; then
+            echo "files: ${files} touch ${p}${string}"
+            touch "${p}${string}"
+            ((files--))
+        else
+            break;
+        fi
+    done # for p in "${paths[@]}"
+
+done #while [[ ${files} -gt 0 ]]
