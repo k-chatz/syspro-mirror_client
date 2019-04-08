@@ -4,7 +4,7 @@ generate_random_string() {
     if [[  $# -ge 1 ]]; then
         maxStringLength=$1
         string="";
-        pattern="abcdefghijklwricoalc234019495023";
+        pattern="ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
         patternLength=`expr length ${pattern}`;
         stringLength=`expr $RANDOM % ${maxStringLength} + 1`
         for ((sl=0; sl <= stringLength; sl++)) do
