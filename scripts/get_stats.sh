@@ -7,15 +7,15 @@ fs=0
 fr=0
 dn=0
 
+declare -a cls=()
+
 while read line; do
     cmd=`echo ${line} | cut -d' ' -f1`
     value=`echo ${line} | cut -d' ' -f2`
-
     case "${cmd}" in
-
     cl)
         ((clients++))
-        #todo: add client in array
+         cls+=(${value})
         ;;
     bs)
         ((bs+=value))
@@ -36,9 +36,21 @@ while read line; do
 
 done < /dev/stdin
 
-echo "Clients: ${clients}"
-echo "Minimum client id: ${clients}" #todo: find min value from array
-echo "Maximum client id: ${clients}" #todo: find max value from array
+max=${cls[0]}
+min=${cls[0]}
+
+for i in "${cls[@]}"; do
+    if [[ ${i} -gt ${max} ]]; then
+      max=${i}
+    fi
+    if [[ ${i} -lt ${min} ]]; then
+      min=${i}
+    fi
+done
+
+echo "Clients: ${clients} (${cls[@]})"
+echo "Minimum client id: ${min}"
+echo "Maximum client id: ${max}"
 echo "Sent bytes: ${bs}"
 echo "Receive bytes: ${br}"
 echo "Sent files: ${fs}"

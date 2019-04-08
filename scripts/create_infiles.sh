@@ -74,7 +74,7 @@ while [[ ${files} -gt 0 ]]; do
             echo "Create file: ${p}${string}"
             filename=${string}
             echo filename >> "${p}${string}"
-            head -c `expr $RANDOM % 128000 + 1` /dev/urandom >> "${p}${string}"
+            head -c `expr $RANDOM % 128001` /dev/urandom >> "${p}${string}"
             ((files--))
         else
             break;
