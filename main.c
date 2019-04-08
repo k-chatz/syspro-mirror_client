@@ -16,6 +16,7 @@
 #include "sender.h"
 #include "receiver.h"
 #include <math.h>
+#include <wait.h>
 
 #define EVENT_SIZE (sizeof(struct inotify_event))
 #define EVENT_BUF_LEN (1024 * (EVENT_SIZE + 16))
@@ -103,7 +104,7 @@ void readOptions(
 /**
  * Interupt or quit action*/
 void sig_int_quit_action(int signal) {
-    char *buffer = NULL;
+    char *id_path = NULL;
     size_t lb = 0;
 
     printf("sig_int_quit_action ::: signo: %d\n", signal);
@@ -111,14 +112,14 @@ void sig_int_quit_action(int signal) {
     rmdir(mirror_dir);
 
     lb = (size_t) (strlen(common_dir) + digits(id)) + 5;
-    if (!(buffer = malloc(lb))) {
-        perror("malloc");
+    if (!(id_path = malloc(lb))) {
+        exit(1);
     }
 
-    sprintf(buffer, "%s/%d.id", common_dir, id);
+    sprintf(id_path, "%s/%d.id", common_dir, id);
 
-    if (unlink(buffer) < 0) {
-        perror(buffer);
+    if (unlink(id_path) < 0) {
+        perror(id_path);
     }
 
     if (receiver_pid) {
@@ -129,7 +130,7 @@ void sig_int_quit_action(int signal) {
         kill(sender_pid, SIGUSR2);
     }
 
-    free(buffer);
+    free(id_path);
 
     quit = true;
 }
@@ -167,7 +168,7 @@ void clientDestroy(char *fn) {
  * Check */
 void create(char *filename) {
     struct stat s = {0};
-    char *buffer = NULL, *f = NULL, *fn = NULL;
+    char *buffer = NULL, *f = NULL, *fn = NULL, *f_suffix = NULL;
     int client = 0;
     size_t lb;
 
@@ -179,14 +180,12 @@ void create(char *filename) {
 
     client = (int) strtol(strtok(filename, "."), NULL, 10);
     if (client > 0 && client != id) {
-
-        /* Check file suffix to determine if it ends with '.id'.*/
-        if (!strcmp(strtok(NULL, "\0"), "id")) {
-
+        f_suffix = strtok(NULL, "\0");
+        if (f_suffix != NULL && !strcmp(f_suffix, "id")) {
             if (HT_Insert(clientsHT, f, f, (void **) &fn)) {
 
                 if (!(buffer = malloc(lb))) {
-                    perror("malloc");
+                    exit(1);
                 }
 
                 /* Construct id file*/
@@ -234,39 +233,42 @@ void create(char *filename) {
 /**
  * Destroy child*/
 void destroy(char *filename) {
-    char *buffer = NULL, *f = NULL, *folder = NULL;
-    size_t lb = 0;
+    char *path = NULL, *f = NULL, *folder = NULL, *f_suffix = NULL;
+    int status = 0;
     __pid_t d_pid = 0;
 
     /* Make a copy of filename.*/
     f = malloc(sizeof(char) * strlen(filename) + 1);
+
     strcpy(f, filename);
 
     folder = strtok(filename, ".");
-    if (!strcmp(strtok(NULL, "\0"), "id")) {
+    f_suffix = strtok(NULL, "\0");
 
-        d_pid = fork();
-        if (d_pid < 0) {
-            perror("fork");
+    if (f_suffix != NULL && !strcmp(f_suffix, "id")) {
+
+        /* Allocate space for target dir.*/
+        if (!(path = malloc((size_t) (strlen(mirror_dir) + strlen(folder)) + 2))) {
             exit(EXIT_FAILURE);
         }
 
+        /* Construct path.*/
+        sprintf(path, "%s/%s", mirror_dir, folder);
+
+        d_pid = fork();
         if (d_pid == 0) {
-
-            /* Allocate space for target dir.*/
-            lb = (size_t) (strlen(mirror_dir) + strlen(folder)) + 2;
-
-            if (!(buffer = malloc(lb))) {
-                perror("malloc");
-                exit(EXIT_FAILURE);
-            }
-
-            sprintf(buffer, "%s/%s", mirror_dir, folder);
-            printf("\nbuffer: [%s]\n", buffer);
-            rmdir(buffer);
-            execlp("rm", "-r", "-f", buffer, NULL);
+            execlp("rm", "-r", "-f", path, NULL);
             perror("execlp");
-            free(buffer);
+        } else if (d_pid > 0) {
+            waitpid(d_pid, &status, 0);
+            if (WIFEXITED(status) && WEXITSTATUS(status) == 0) {
+                if (HT_Remove(clientsHT, f, f, false)) {
+                    printf("Dir '%s' removed successfully!\n", path);
+                }
+            }
+        } else {
+            fprintf(stderr, "Fork error!");
+            exit(EXIT_FAILURE);
         }
     }
     free(f);
@@ -335,7 +337,6 @@ int main(int argc, char *argv[]) {
         free(buffer);
 
     } else {
-        perror("malloc");
         exit(EXIT_FAILURE);
     }
 
@@ -387,8 +388,7 @@ int main(int argc, char *argv[]) {
     printf("\n:READ EVENTS:\n\n");
 
     while (!quit) {
-        bytes = read(fd_inotify, event_buffer, EVENT_BUF_LEN);
-        if (bytes < 0) {
+        if ((bytes = read(fd_inotify, event_buffer, EVENT_BUF_LEN)) < 0) {
             perror("read i-notify event");
         }
         ev = 0;

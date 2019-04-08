@@ -6,23 +6,26 @@
 #include <fcntl.h>
 #include <errno.h>
 #include <dirent.h>
+#include <signal.h>
 #include "sender.h"
+
+void _s_alarm_action(int signo) {
+    fprintf(stderr, "\nClient: [%d:%d], %d: alarm timeout!\n", id, getppid(), getpid());
+    kill(getppid(), SIGUSR2);
+    exit(2);
+}
 
 /**
  * Read directory & subdirectories recursively*/
-void rec_cp(int fd_fifo, const char *path) {
-    struct dirent *d = NULL;
-    char *r_path = NULL;
-    DIR *dir = NULL;
-    size_t lb;
-
+void rec_cp(int fd_fifo, const char *path, unsigned long *s_bytes, unsigned long *s_files) {
+    char buffer[buffer_size], *dirName = NULL, *fileName = NULL, *r_path = NULL;
     int fileNameLength = 0, fd_file = 0;
     unsigned int fileSize = 0;
+    ssize_t bytes = 0, n = 0;
+    struct dirent *d = NULL;
     struct stat s = {0};
-    char buffer[buffer_size];
-    ssize_t n = 0;
-    char *dirName = NULL;
-    char *fileName = NULL;
+    DIR *dir = NULL;
+    size_t lb;
 
     if ((dir = opendir(path))) {
         while ((d = readdir(dir))) {
@@ -51,13 +54,15 @@ void rec_cp(int fd_fifo, const char *path) {
 
                     fileNameLength = (unsigned short int) strlen(fileName) + 1;
 
-                    /* Write length of filename/directory to pipe.*/
+
                     alarm(30);
-                    if (write(fd_fifo, &fileNameLength, sizeof(unsigned short int)) < 0) {
+                    /* Write length of filename/directory to pipe.*/
+                    if ((bytes = write(fd_fifo, &fileNameLength, sizeof(unsigned short int))) < 0) {
                         perror("Error in Writing");
                     }
                     alarm(0);
 
+                    *s_bytes += bytes;
 
                     if (!(dirName = malloc((size_t) fileNameLength))) {
                         perror("malloc");
@@ -67,16 +72,17 @@ void rec_cp(int fd_fifo, const char *path) {
                     strcat(dirName, "/");
 
                     alarm(30);
-
                     /* Write relative path of directory to pipe.*/
-                    if (write(fd_fifo, dirName, (size_t) fileNameLength) < 0) {
+                    if ((bytes = write(fd_fifo, dirName, (size_t) fileNameLength)) < 0) {
                         perror("Error in Writing");
                     }
 
                     alarm(0);
 
+                    *s_bytes += bytes;
+
                     free(dirName);
-                    rec_cp(fd_fifo, r_path);
+                    rec_cp(fd_fifo, r_path, s_bytes, s_files);
 
                 } else if (S_ISREG(s.st_mode)) {
 
@@ -85,20 +91,24 @@ void rec_cp(int fd_fifo, const char *path) {
                     alarm(30);
 
                     /* Write length of filename to pipe.*/
-                    if (write(fd_fifo, &fileNameLength, sizeof(unsigned short int)) < 0) {
+                    if ((bytes = write(fd_fifo, &fileNameLength, sizeof(unsigned short int))) < 0) {
                         perror("Error in Writing");
                     }
 
                     alarm(0);
+
+                    *s_bytes += bytes;
 
                     alarm(30);
 
                     /* Write relative path to pipe.*/
-                    if (write(fd_fifo, fileName, strlen(fileName)) < 0) {
+                    if ((bytes = write(fd_fifo, fileName, strlen(fileName))) < 0) {
                         perror("Error in Writing");
                     }
 
                     alarm(0);
+
+                    *s_bytes += bytes;
 
                     /* Open file*/
                     if ((fd_file = open(r_path, O_RDONLY)) < 0) {
@@ -108,11 +118,13 @@ void rec_cp(int fd_fifo, const char *path) {
                     alarm(30);
 
                     /* Write file size.*/
-                    if (write(fd_fifo, &fileSize, sizeof(unsigned int)) < 0) {
+                    if ((bytes = write(fd_fifo, &fileSize, sizeof(unsigned int))) < 0) {
                         perror("Error in Writing");
                     }
 
                     alarm(0);
+
+                    *s_bytes += bytes;
 
                     if (fileSize > 0) {
                         do {
@@ -121,15 +133,18 @@ void rec_cp(int fd_fifo, const char *path) {
                                 alarm(30);
 
                                 /* Write file.*/
-                                if (write(fd_fifo, buffer, (size_t) n) < 0) {
+                                if ((bytes = write(fd_fifo, buffer, (size_t) n)) < 0) {
                                     perror("Error in Writing");
                                 }
 
                                 alarm(0);
 
+                                *s_bytes += bytes;
+
                             }
                         } while (n == buffer_size);
                     }
+                    (*s_files)++;
                 }
             } else {
                 perror("File not found");
@@ -144,10 +159,20 @@ void rec_cp(int fd_fifo, const char *path) {
  * Sender child*/
 void sender(int receiverId) {
     unsigned short int fileNameLength = 0;
+    unsigned long int s_files = 0, s_bytes = 0;
+    static struct sigaction act;
     char *fifo = NULL;
     int fd_fifo = 0;
+    ssize_t bytes = 0;
 
-    printf("\nSENDER PID: [%d], PARENT PID: [%d]\n", getpid(), getppid());
+    fprintf(stdout, "\nC[%d:%d] - S[%d:%d]\n", id, getppid(), receiverId, getpid());
+
+    /* set up the signal handler*/
+    act.sa_handler = _s_alarm_action;
+
+    sigfillset(&(act.sa_mask));
+
+    sigaction(SIGALRM, &act, NULL);
 
     if (!(fifo = malloc((strlen(common_dir) + digits(id) + digits(receiverId) + 15)))) {
         perror("malloc");
@@ -172,16 +197,18 @@ void sender(int receiverId) {
     alarm(0);
 
     /* Write to fifo for each file or folder.*/
-    rec_cp(fd_fifo, input_dir);
+    rec_cp(fd_fifo, input_dir, &s_bytes, &s_files);
 
     fileNameLength = 0;
 
     alarm(30);
 
-    if (write(fd_fifo, &fileNameLength, sizeof(unsigned short int)) < 0) {
+    if ((bytes = write(fd_fifo, &fileNameLength, sizeof(unsigned short int))) < 0) {
         perror("Error in Writing");
         exit(2);
     }
+
+    s_bytes += bytes;
 
     alarm(0);
 
@@ -191,4 +218,14 @@ void sender(int receiverId) {
     unlink(fifo);
 
     free(fifo);
+
+    kill(getppid(), SIGUSR2);
+
+    fprintf(stdout, "\nC[%d:%d] - S[%d:%d]: Files send: [%lu]\n", id, getppid(), receiverId, getpid(),
+            s_files);
+    fprintf(stdout, "\nC[%d:%d] - S[%d:%d]: Bytes send: [%lu]\n", id, getppid(), receiverId, getpid(),
+            s_bytes);
+    fprintf(stdout, "\nC[%d:%d] - S[%d:%d]: All files send successfully.\n", id, getppid(), receiverId,
+            getpid());
+
 }

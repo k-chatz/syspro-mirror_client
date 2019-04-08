@@ -5,12 +5,22 @@
 #include <fcntl.h>
 #include <sys/stat.h>
 #include <errno.h>
+#include <signal.h>
 #include "receiver.h"
+
+unsigned long int r_files = 0, r_bytes = 0;
+
+void _r_alarm_action(int signo) {
+    fprintf(stderr, "\nClient: [%d:%d], %d: alarm timeout!\n", id, getppid(), getpid());
+    kill(getppid(), SIGUSR2);
+    exit(3);
+}
 
 /**
  * Receiver child*/
 void receiver(int senderId) {
     unsigned short int fileNameLength = 0;
+    static struct sigaction act;
     unsigned int fileSize = 0;
     unsigned long int offset = 0;
     struct stat s = {0};
@@ -19,7 +29,17 @@ void receiver(int senderId) {
     ssize_t bytes = 0;
     size_t lb = 0;
 
-    printf("\nRECEIVER PID: [%d], PARENT PID: [%d]\n", getpid(), getppid());
+    fprintf(stdout, "\nC[%d:%d] - R[%d:%d]\n", id, getppid(), senderId, getpid());
+
+    r_files = 0;
+    r_bytes = 0;
+
+    /* set up the signal handler*/
+    act.sa_handler = _r_alarm_action;
+
+    sigfillset(&(act.sa_mask));
+
+    sigaction(SIGALRM, &act, NULL);
 
     if (!(fifo = malloc((strlen(common_dir) + digits(senderId) + digits(id) + 15)))) {
         perror("malloc");
@@ -44,33 +64,37 @@ void receiver(int senderId) {
         alarm(30);
 
         /* Read filename size.*/
-        if ((read(fd_fifo, &fileNameLength, sizeof(unsigned short int))) < 0) {
+        if ((bytes = read(fd_fifo, &fileNameLength, sizeof(unsigned short int))) < 0) {
             perror("problem in reading");
         }
 
         alarm(0);
+
+        r_bytes += bytes;
 
         if (fileNameLength <= 0) {
             break;
         }
 
         if (!(fileName = malloc((size_t) fileNameLength))) {
-            perror("malloc filename");
+            exit(1);
         }
 
         alarm(30);
 
         /* Read filename.*/
-        if ((read(fd_fifo, fileName, (size_t) fileNameLength)) < 0) {
+        if ((bytes = read(fd_fifo, fileName, (size_t) fileNameLength)) < 0) {
             perror("problem in reading");
         }
 
         alarm(0);
 
+        r_bytes += bytes;
+
         lb = strlen(mirror_dir) + digits(senderId) + fileNameLength + 3;
 
         if (!(path = malloc(lb))) {
-            perror("malloc r_path");
+            exit(1);
         }
 
         snprintf(path, lb, "%s/%d/%s", mirror_dir, senderId, fileName);
@@ -95,9 +119,11 @@ void receiver(int senderId) {
             alarm(30);
 
             /* Read file size.*/
-            if ((read(fd_fifo, &fileSize, sizeof(unsigned int))) < 0) {
+            if ((bytes = read(fd_fifo, &fileSize, sizeof(unsigned int))) < 0) {
                 perror("problem in reading");
             }
+
+            r_bytes += bytes;
 
             b = fileSize;
 
@@ -113,7 +139,12 @@ void receiver(int senderId) {
 
                 alarm(30);
 
-                bytes = read(fd_fifo, buffer, b > buffer_size ? buffer_size : b);
+                /* Read file size.*/
+                if ((bytes = read(fd_fifo, buffer, b > buffer_size ? buffer_size : b)) < 0) {
+                    perror("problem in reading");
+                }
+
+                r_bytes += bytes;
 
                 alarm(0);
 
@@ -124,7 +155,7 @@ void receiver(int senderId) {
                 b -= bytes;
             };
 
-            fprintf(stdout, "cp %s %d\n", path, fileSize);
+            r_files++;
 
             close(fd_file);
         }
@@ -133,9 +164,20 @@ void receiver(int senderId) {
         free(fileName);
     }
 
+
     close(fd_fifo);
 
     unlink(fifo);
 
     free(fifo);
+
+    /* Send a signal to the parent process to inform that everything went well!*/
+    kill(getppid(), SIGUSR2);
+
+    fprintf(stdout, "\nC[%d:%d] - R[%d:%d]: Files received: [%lu]\n", id, getppid(), senderId, getpid(),
+            r_files);
+    fprintf(stdout, "\nC[%d:%d] - R[%d:%d]: Bytes received: [%lu]\n", id, getppid(), senderId, getpid(),
+            r_bytes);
+    fprintf(stdout, "\nC[%d:%d] - R[%d:%d]: All files received successfully.\n", id, getppid(), senderId,
+            getpid());
 }
