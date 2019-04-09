@@ -9,6 +9,8 @@
 #include <stdio.h>
 #include "sender.h"
 
+#define TIMEOUT 30
+
 void _s_alarm_action(int signo) {
     fprintf(stderr, "\nClient: [%d:%d], %d: alarm timeout!\n", id, getppid(), getpid());
     kill(getppid(), SIGUSR2);
@@ -25,7 +27,6 @@ void rec_cp(int fd_fifo, const char *_p, unsigned long *s_bytes, unsigned long *
     struct dirent *d = NULL;
     struct stat s = {0};
     DIR *dir = NULL;
-    size_t lb;
 
     if ((dir = opendir(_p))) {
         while ((d = readdir(dir))) {
@@ -51,7 +52,7 @@ void rec_cp(int fd_fifo, const char *_p, unsigned long *s_bytes, unsigned long *
 
                     fileNameLength = (unsigned short int) strlen(fileName) + 1;
 
-                    alarm(30);
+                    alarm(TIMEOUT);
                     if ((bytes = write(fd_fifo, &fileNameLength, sizeof(unsigned short int))) < 0) {
                         fprintf(stderr, "\n%s:%d-fifo write error: '%s'\n", __FILE__, __LINE__, strerror(errno));
                     }
@@ -62,7 +63,7 @@ void rec_cp(int fd_fifo, const char *_p, unsigned long *s_bytes, unsigned long *
                     strcpy(dirName, fileName);
                     strcat(dirName, "/");
 
-                    alarm(30);
+                    alarm(TIMEOUT);
                     if ((bytes = write(fd_fifo, dirName, (size_t) fileNameLength)) < 0) {
                         fprintf(stderr, "\n%s:%d-fifo write error: '%s'\n", __FILE__, __LINE__, strerror(errno));
                     }
@@ -75,7 +76,7 @@ void rec_cp(int fd_fifo, const char *_p, unsigned long *s_bytes, unsigned long *
 
                     fileNameLength = (unsigned short int) strlen(fileName);
 
-                    alarm(30);
+                    alarm(TIMEOUT);
                     if ((bytes = write(fd_fifo, &fileNameLength, sizeof(unsigned short int))) < 0) {
                         fprintf(stderr, "\n%s:%d-fifo write error: '%s'\n", __FILE__, __LINE__, strerror(errno));
                     }
@@ -83,7 +84,7 @@ void rec_cp(int fd_fifo, const char *_p, unsigned long *s_bytes, unsigned long *
 
                     *s_bytes += bytes;
 
-                    alarm(30);
+                    alarm(TIMEOUT);
                     if ((bytes = write(fd_fifo, fileName, strlen(fileName))) < 0) {
                         fprintf(stderr, "\n%s:%d-fifo write error: '%s'\n", __FILE__, __LINE__, strerror(errno));
                     }
@@ -97,7 +98,7 @@ void rec_cp(int fd_fifo, const char *_p, unsigned long *s_bytes, unsigned long *
                                 strerror(errno));
                     }
 
-                    alarm(30);
+                    alarm(TIMEOUT);
                     if ((bytes = write(fd_fifo, &fileSize, sizeof(unsigned int))) < 0) {
                         fprintf(stderr, "\n%s:%d-fifo write error: '%s'\n", __FILE__, __LINE__, strerror(errno));
                     }
@@ -109,7 +110,7 @@ void rec_cp(int fd_fifo, const char *_p, unsigned long *s_bytes, unsigned long *
                         do {
                             if ((n = read(fd_file, buffer, buffer_size)) > 0) {
 
-                                alarm(30);
+                                alarm(TIMEOUT);
                                 if ((bytes = write(fd_fifo, buffer, (size_t) n)) < 0) {
                                     fprintf(stderr, "\n%s:%d-fifo write error: '%s'\n", __FILE__, __LINE__,
                                             strerror(errno));
@@ -136,9 +137,10 @@ void sender(int rid) {
     unsigned short int fileNameLength = 0;
     unsigned long int s_files = 0, s_bytes = 0;
     static struct sigaction act;
-    char fifo[PATH_MAX + 1];
-    int fd_fifo = 0;
+    char s_fifo[PATH_MAX + 1];
+    int fd_fifo = 0, f = 0;
     ssize_t bytes = 0;
+
 
     fprintf(stdout, "C[%d:%d]-S[%d:%d]\n", id, getppid(), rid, getpid());
 
@@ -150,21 +152,22 @@ void sender(int rid) {
     sigaction(SIGALRM, &act, NULL);
 
     /* Construct fifo filename*/
-    if (sprintf(fifo, "%s/id%d_to_id%d.fifo", common_dir, id, rid) < 0) {
+    if (sprintf(s_fifo, "%s/id%d_to_id%d.fifo", common_dir, id, rid) < 0) {
         fprintf(stderr, "\n%s:%d-sprintf error\n", __FILE__, __LINE__);
         exit(EXIT_FAILURE);
     }
 
     /* Create fifo*/
-    if ((mkfifo(fifo, S_IRUSR | S_IWUSR | S_IXUSR) < 0) && (errno != EEXIST)) {
-        fprintf(stderr, "\n%s:%d-[%s] mkfifo error: '%s'\n", __FILE__, __LINE__, fifo, strerror(errno));
+    if ((f = mkfifo(s_fifo, S_IRUSR | S_IWUSR | S_IXUSR) < 0) && (errno != EEXIST)) {
+        fprintf(stderr, "\n%s:%d-[%s] mkfifo error: '%s'\n", __FILE__, __LINE__, s_fifo, strerror(errno));
+        exit(EXIT_FAILURE);
     }
 
-    alarm(30);
+    alarm(TIMEOUT);
 
     /* Open fifo*/
-    if ((fd_fifo = open(fifo, O_WRONLY)) < 0) {
-        fprintf(stderr, "\n%s:%d-[%s] fifo open error: '%s'\n", __FILE__, __LINE__, fifo, strerror(errno));
+    if ((fd_fifo = open(s_fifo, O_WRONLY)) < 0) {
+        fprintf(stderr, "\n%s:%d-[%s] fifo open error: '%s'\n", __FILE__, __LINE__, s_fifo, strerror(errno));
         exit(1);
     }
 
@@ -175,7 +178,7 @@ void sender(int rid) {
 
     fileNameLength = 0;
 
-    alarm(30);
+    alarm(TIMEOUT);
 
     if ((bytes = write(fd_fifo, &fileNameLength, sizeof(unsigned short int))) < 0) {
         fprintf(stderr, "\n%s:%d-fifo write error: '%s'\n", __FILE__, __LINE__, strerror(errno));
@@ -189,10 +192,13 @@ void sender(int rid) {
     /* Close fifo*/
     close(fd_fifo);
 
-    unlink(fifo);
+    if (f == 0) {
+        unlink(s_fifo);
+    }
 
     kill(getppid(), SIGUSR1);
 
-    fprintf(stdout, "\nC[%d:%d]-R[%d:%d]:-FINISH - Send %lu files (%lu bytes)\n", id, getppid(), rid, getpid(), s_files,
+    fprintf(stdout, "\nC%d:%d-S[%d:%d]:-FINISH - Send %lu files (Total bytes %lu)\n", id, getppid(), rid, getpid(),
+            s_files,
             s_bytes);
 }

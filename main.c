@@ -26,7 +26,7 @@
 typedef void *pointer;
 
 Hashtable clientsHT = NULL;
-char *common_dir = NULL, *input_dir = NULL, *mirror_dir = NULL;
+char *common_dir = NULL, *input_dir = NULL, *mirror_dir = NULL, *log_file = NULL;
 unsigned long int buffer_size = 0;
 int id = 0, fd_log_file = 0;
 __pid_t sender_pid = 0, receiver_pid = 0;
@@ -106,7 +106,6 @@ void readOptions(
  * Interupt or quit action*/
 void sig_int_quit_action(int signal) {
     char id_path[PATH_MAX + 1];
-    size_t lb = 0;
 
     printf("sig_int_quit_action ::: signo: %d\n", signal);
 
@@ -126,7 +125,7 @@ void sig_int_quit_action(int signal) {
  * @Signal_handler
  * Child finish*/
 void sig_usr_1_action(int signal) {
-    fprintf(stderr, "\n%s:%d-Client: [%d:%d]: child send finish signal!\n", __FILE__, __LINE__, id, getpid());
+    fprintf(stdout, "\n%s:%d-Client: [%d:%d]: child send finish signal!\n", __FILE__, __LINE__, id, getpid());
 }
 
 /**
@@ -268,16 +267,17 @@ void destroy(char *filename) {
 }
 
 int main(int argc, char *argv[]) {
-    char event_buffer[EVENT_BUF_LEN], id_file[PATH_MAX + 1], *log_file = NULL;
-    FILE *file_id = NULL;
-    int fd_inotify = 0, ev, wd, status = 0;;
-    struct stat s = {0};
-    ssize_t bytes;
+    char event_buffer[EVENT_BUF_LEN], id_file[PATH_MAX + 1];
     static struct sigaction quit_action, child_alarm, child_finish;
-    size_t lb = 0;
-    struct dirent *d = NULL;
-    DIR *dir = NULL;
+    int fd_inotify = 0, ev, wd, status = 0;;
     struct inotify_event *event = NULL;
+    struct dirent *d = NULL;
+    struct stat s = {0};
+    FILE *file_id = NULL;
+    ssize_t bytes = 0;
+    DIR *dir = NULL;
+    __pid_t wpid = 0;
+    FILE *logfile = NULL;
 
     printf("pid: %d\n", getpid());
 
@@ -333,11 +333,13 @@ int main(int argc, char *argv[]) {
         fprintf(stderr, "\n%s:%d-file '%s' already exists!\n", __FILE__, __LINE__, log_file);
         exit(EXIT_FAILURE);
     } else {
-        if ((fd_log_file = open(log_file, O_CREAT | O_WRONLY | O_TRUNC, S_IRUSR | S_IWUSR | S_IXUSR)) < 0) {
+        if ((logfile = fopen(log_file, "w")) == NULL) {
             fprintf(stderr, "\n%s:%d-[%s] open error: '%s'\n", __FILE__, __LINE__, log_file, strerror(errno));
             exit(EXIT_FAILURE);
         }
     }
+
+    fprintf(logfile, "cl %d\n", id);
 
     /* Initialize inotify.*/
     if ((fd_inotify = inotify_init()) < 0) {
@@ -414,9 +416,11 @@ int main(int argc, char *argv[]) {
     /* Close the i-notify instance.*/
     close(fd_inotify);
 
-    close(fd_log_file);
+    while ((wpid = wait(&status)) > 0);
 
-    //while ((wpid = wait(&status)) > 0);
+    fprintf(logfile, "cl %d\n", id);
+
+    fclose(logfile);
 
     return 0;
 }
