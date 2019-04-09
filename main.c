@@ -113,22 +113,22 @@ void sig_int_quit_action(int signal) {
 
     lb = (size_t) (strlen(common_dir) + digits(id)) + 5;
     if (!(id_path = malloc(lb))) {
-        exit(1);
+        exit(EXIT_FAILURE);
     }
 
     sprintf(id_path, "%s/%d.id", common_dir, id);
 
     if (unlink(id_path) < 0) {
-        fprintf(stderr, "\n%s:%d\t[%s] unlink error: '%s'\n", __FILE__, __LINE__, id_path, strerror(errno));
+        fprintf(stderr, "\n%s:%d-[%s] unlink error: '%s'\n", __FILE__, __LINE__, id_path, strerror(errno));
     }
 
-    free(id_path);
+    //free(id_path);
 
     quit = true;
 }
 
 void sig_usr_2_action(int signal) {
-    fprintf(stderr, "\n%s:%d\tClient: [%d:%d]: child send alarm timeout!\n", __FILE__, __LINE__, id, getpid());
+    fprintf(stderr, "\n%s:%d-Client: [%d:%d]: child send alarm timeout!\n", __FILE__, __LINE__, id, getpid());
 }
 
 /**
@@ -157,7 +157,7 @@ unsigned long int clientHash(char *key, unsigned long int capacity) {
 /**
  * @Callback HT Destroy*/
 void clientDestroy(char *fn) {
-    free(fn);
+    //free(fn);
 }
 
 /**
@@ -171,7 +171,10 @@ void create(char *filename) {
     lb = strlen(common_dir) + strlen(filename) + 2;
 
     /* Make a copy of filename.*/
-    f = malloc(sizeof(char) * strlen(filename) + 1);
+    if (!(f = malloc(sizeof(char) * strlen(filename) + 1))) {
+        exit(EXIT_FAILURE);
+    }
+
     strcpy(f, filename);
 
     client = (int) strtol(strtok(filename, "."), NULL, 10);
@@ -181,7 +184,7 @@ void create(char *filename) {
             if (HT_Insert(clientsHT, f, f, (void **) &fn)) {
 
                 if (!(buffer = malloc(lb))) {
-                    exit(1);
+                    exit(EXIT_FAILURE);
                 }
 
                 /* Construct id file*/
@@ -193,7 +196,7 @@ void create(char *filename) {
                         /* Create sender.*/
                         sender_pid = fork();
                         if (sender_pid < 0) {
-                            fprintf(stderr, "\n%s:%d\tSender fork error: '%s'\n", __FILE__, __LINE__, strerror(errno));
+                            fprintf(stderr, "\n%s:%d-Sender fork error: '%s'\n", __FILE__, __LINE__, strerror(errno));
                             exit(EXIT_FAILURE);
                         }
                         if (sender_pid == 0) {
@@ -204,7 +207,7 @@ void create(char *filename) {
                         /* Create receiver.*/
                         receiver_pid = fork();
                         if (receiver_pid < 0) {
-                            fprintf(stderr, "\n%s:%d\tReceiver fork error: '%s'\n", __FILE__, __LINE__,
+                            fprintf(stderr, "\n%s:%d-Receiver fork error: '%s'\n", __FILE__, __LINE__,
                                     strerror(errno));
                             exit(EXIT_FAILURE);
                         }
@@ -216,9 +219,9 @@ void create(char *filename) {
                         sleep(1);
                     }
                 } else {
-                    fprintf(stderr, "\n%s:%d\t[%s] stat error: '%s'\n", __FILE__, __LINE__, buffer, strerror(errno));
+                    fprintf(stderr, "\n%s:%d-[%s] stat error: '%s'\n", __FILE__, __LINE__, buffer, strerror(errno));
                 }
-                free(buffer);
+                //free(buffer);
 
             } else {
                 fprintf(stderr, "\n---HT File: [%s] already exists!---\n", fn);
@@ -235,7 +238,9 @@ void destroy(char *filename) {
     __pid_t d_pid = 0;
 
     /* Make a copy of filename.*/
-    f = malloc(sizeof(char) * strlen(filename) + 1);
+    if (!(f = malloc(sizeof(char) * strlen(filename) + 1))) {
+        exit(EXIT_FAILURE);
+    }
 
     strcpy(f, filename);
 
@@ -255,7 +260,7 @@ void destroy(char *filename) {
         d_pid = fork();
         if (d_pid == 0) {
             execlp("rm", "-r", "-f", path, NULL);
-            fprintf(stderr, "\n%s:%d\t[%s] execlp error: '%s'\n", __FILE__, __LINE__, path, strerror(errno));
+            fprintf(stderr, "\n%s:%d-[%s] execlp error: '%s'\n", __FILE__, __LINE__, path, strerror(errno));
         } else if (d_pid > 0) {
             waitpid(d_pid, &status, 0);
             if (WIFEXITED(status) && WEXITSTATUS(status) == 0) {
@@ -264,11 +269,11 @@ void destroy(char *filename) {
                 }
             }
         } else {
-            fprintf(stderr, "\n%s:%d\tfork error: '%s'\n", __FILE__, __LINE__, strerror(errno));
+            fprintf(stderr, "\n%s:%d-fork error: '%s'\n", __FILE__, __LINE__, strerror(errno));
             exit(EXIT_FAILURE);
         }
     }
-    free(f);
+    //free(f);
 }
 
 int main(int argc, char *argv[]) {
@@ -302,7 +307,7 @@ int main(int argc, char *argv[]) {
             exit(EXIT_FAILURE);
         }
     } else {
-        fprintf(stderr, "\n%s:%d\t[%s] stat error: '%s'\n", __FILE__, __LINE__, input_dir, strerror(errno));
+        fprintf(stderr, "\n%s:%d-[%s] stat error: '%s'\n", __FILE__, __LINE__, input_dir, strerror(errno));
         exit(EXIT_FAILURE);
     }
 
@@ -331,7 +336,7 @@ int main(int argc, char *argv[]) {
             fprintf(file_id, "%d", (int) getpid());
             fclose(file_id);
         }
-        free(buffer);
+        //free(buffer);
 
     } else {
         exit(EXIT_FAILURE);
@@ -343,7 +348,7 @@ int main(int argc, char *argv[]) {
         exit(EXIT_FAILURE);
     } else {
         if ((fd_log_file = open(log_file, O_CREAT | O_WRONLY | O_TRUNC, S_IRUSR | S_IWUSR | S_IXUSR)) < 0) {
-            fprintf(stderr, "\n%s:%d\t[%s] open error: '%s'\n", __FILE__, __LINE__, log_file, strerror(errno));
+            fprintf(stderr, "\n%s:%d-[%s] open error: '%s'\n", __FILE__, __LINE__, log_file, strerror(errno));
             exit(EXIT_FAILURE);
         }
     }
@@ -351,7 +356,7 @@ int main(int argc, char *argv[]) {
     /* Initialize inotify.*/
     fd_inotify = inotify_init();
     if (fd_inotify < 0) {
-        fprintf(stderr, "\n%s:%d\tinotify_init error: '%s'\n", __FILE__, __LINE__, strerror(errno));
+        fprintf(stderr, "\n%s:%d-inotify_init error: '%s'\n", __FILE__, __LINE__, strerror(errno));
     }
 
     /* Set custom signal action for SIGINT (^c) & SIGQUIT (^\) signals.*/
@@ -392,7 +397,7 @@ int main(int argc, char *argv[]) {
     /* Read events*/
     while (!quit) {
         if ((bytes = read(fd_inotify, event_buffer, EVENT_BUF_LEN)) < 0) {
-            fprintf(stderr, "\n%s:%d\ti-notify event read error: '%s'\n", __FILE__, __LINE__, strerror(errno));
+            fprintf(stderr, "\n%s:%d-i-notify event read error: '%s'\n", __FILE__, __LINE__, strerror(errno));
         }
         ev = 0;
         while (ev < bytes) {
@@ -405,7 +410,6 @@ int main(int argc, char *argv[]) {
                 } else if (event->mask & IN_DELETE) {
                     if (!(event->mask & IN_ISDIR)) {
                         destroy(event->name);
-                        //quit = true;
                     }
                 }
                 ev += EVENT_SIZE + event->len;
