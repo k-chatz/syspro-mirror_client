@@ -1,4 +1,3 @@
-#include <malloc.h>
 #include <string.h>
 #include <zconf.h>
 #include <sys/stat.h>
@@ -7,6 +6,7 @@
 #include <errno.h>
 #include <dirent.h>
 #include <signal.h>
+#include <stdio.h>
 #include "sender.h"
 
 void _s_alarm_action(int signo) {
@@ -132,7 +132,7 @@ void rec_cp(int fd_fifo, const char *_p, unsigned long *s_bytes, unsigned long *
 
 /**
  * Sender child*/
-void sender(int receiverId) {
+void sender(int rid) {
     unsigned short int fileNameLength = 0;
     unsigned long int s_files = 0, s_bytes = 0;
     static struct sigaction act;
@@ -140,8 +140,7 @@ void sender(int receiverId) {
     int fd_fifo = 0;
     ssize_t bytes = 0;
 
-    //fprintf(stdout, "C[%d:%d]-S[%d:%d]\n", id, getppid(), receiverId, getpid());
-    //fprintf(stdout, "C[%d]-S[%d]\n", id, receiverId);
+    fprintf(stdout, "C[%d:%d]-S[%d:%d]\n", id, getppid(), rid, getpid());
 
     /* set up the signal handler*/
     act.sa_handler = _s_alarm_action;
@@ -151,7 +150,7 @@ void sender(int receiverId) {
     sigaction(SIGALRM, &act, NULL);
 
     /* Construct fifo filename*/
-    if (sprintf(fifo, "%s/id%d_to_id%d.fifo", common_dir, id, receiverId) < 0) {
+    if (sprintf(fifo, "%s/id%d_to_id%d.fifo", common_dir, id, rid) < 0) {
         fprintf(stderr, "\n%s:%d-sprintf error\n", __FILE__, __LINE__);
         exit(EXIT_FAILURE);
     }
@@ -192,10 +191,8 @@ void sender(int receiverId) {
 
     unlink(fifo);
 
-    //kill(getppid(), SIGUSR2);
+    kill(getppid(), SIGUSR1);
 
-    //fprintf(stdout, "\nC[%d:%d]-S[%d:%d]:-Files send:[%lu]-Bytes send:[%lu]\n", id, getppid(), receiverId,getpid(), s_files, s_bytes);
-/*    fprintf(stdout, "\nC[%d:%d] - S[%d:%d]: All files send successfully.\n", id, getppid(), receiverId,
-            getpid());*/
-
+    fprintf(stdout, "\nC[%d:%d]-R[%d:%d]:-FINISH - Send %lu files (%lu bytes)\n", id, getppid(), rid, getpid(), s_files,
+            s_bytes);
 }

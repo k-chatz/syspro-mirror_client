@@ -7,6 +7,6 @@ extern int id;
 
 extern unsigned int digits(int n);
 
-void receiver(int senderId);
+void receiver(int sid);
 
 #endif

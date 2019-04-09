@@ -9,27 +9,33 @@
 #include "receiver.h"
 
 unsigned long int r_files = 0, r_bytes = 0;
+int r_fd_fifo = 0, r_fd_file = 0;
+char r_fifo[PATH_MAX + 1];
 
 void _r_alarm_action(int signo) {
     fprintf(stderr, "\nClient: [%d:%d], %d: alarm timeout!\n", id, getppid(), getpid());
+
+    close(r_fd_fifo);
+
+    unlink(r_fifo);
+
     kill(getppid(), SIGUSR2);
     exit(EXIT_FAILURE);
 }
 
 /**
  * Receiver child*/
-void receiver(int senderId) {
+void receiver(int sid) {
     unsigned short int fileNameLength = 0;
     static struct sigaction act;
     unsigned int fileSize = 0;
     unsigned long int offset = 0;
     struct stat s = {0};
-    char buffer[buffer_size], ch, fifo[PATH_MAX + 1], fileName[PATH_MAX + 1], *pch = NULL, path[PATH_MAX + 1];
-    int fd_fifo = 0, fd_file = 0, b = 0;
+    char buffer[buffer_size], ch, fileName[PATH_MAX + 1], *pch = NULL, path[PATH_MAX + 1];
+    int b = 0;
     ssize_t bytes = 0;
 
-    //fprintf(stdout, "C[%d:%d]-R[%d:%d]\n", id, getppid(), senderId, getpid());
-    //fprintf(stdout, "C[%d]-R[%d]\n", id, senderId);
+    fprintf(stdout, "C[%d:%d]-R[%d:%d]\n", id, getppid(), sid, getpid());
 
     r_files = 0;
     r_bytes = 0;
@@ -42,22 +48,22 @@ void receiver(int senderId) {
     sigaction(SIGALRM, &act, NULL);
 
     /* Construct fifo filename*/
-    if (sprintf(fifo, "%s/id%d_to_id%d.fifo", common_dir, senderId, id) < 0) {
+    if (sprintf(r_fifo, "%s/id%d_to_id%d.fifo", common_dir, sid, id) < 0) {
         fprintf(stderr, "\n%s:%d-sprintf error\n", __FILE__, __LINE__);
         exit(EXIT_FAILURE);
     }
 
     /* Create fifo*/
-    if ((mkfifo(fifo, S_IRUSR | S_IWUSR | S_IXUSR) < 0) && (errno != EEXIST)) {
-        fprintf(stderr, "\n%s:%d-[%s] mkfifo error: '%s'\n", __FILE__, __LINE__, fifo, strerror(errno));
+    if ((mkfifo(r_fifo, S_IRUSR | S_IWUSR | S_IXUSR) < 0) && (errno != EEXIST)) {
+        fprintf(stderr, "\n%s:%d-[%s] mkfifo error: '%s'\n", __FILE__, __LINE__, r_fifo, strerror(errno));
         exit(EXIT_FAILURE);
     }
 
     alarm(30);
 
     /* Open fifo.*/
-    if ((fd_fifo = open(fifo, O_RDONLY)) < 0) {
-        fprintf(stderr, "\n%s:%d-[%s] open error: '%s'\n", __FILE__, __LINE__, fifo, strerror(errno));
+    if ((r_fd_fifo = open(r_fifo, O_RDONLY)) < 0) {
+        fprintf(stderr, "\n%s:%d-[%s] open error: '%s'\n", __FILE__, __LINE__, r_fifo, strerror(errno));
         exit(EXIT_FAILURE);
     }
 
@@ -66,7 +72,7 @@ void receiver(int senderId) {
     while (1) {
 
         alarm(30);
-        if ((bytes = read(fd_fifo, &fileNameLength, sizeof(unsigned short int))) < 0) {
+        if ((bytes = read(r_fd_fifo, &fileNameLength, sizeof(unsigned short int))) < 0) {
             fprintf(stderr, "\n%s:%d-[%d] read error: '%s'\n", __FILE__, __LINE__, fileNameLength, strerror(errno));
             exit(EXIT_FAILURE);
         }
@@ -79,7 +85,7 @@ void receiver(int senderId) {
         }
 
         alarm(30);
-        if ((bytes = read(fd_fifo, fileName, (size_t) fileNameLength)) < 0) {
+        if ((bytes = read(r_fd_fifo, fileName, (size_t) fileNameLength)) < 0) {
             fprintf(stderr, "\n%s:%d-[%s] read error: '%s'\n", __FILE__, __LINE__, fileName, strerror(errno));
             exit(EXIT_FAILURE);
         }
@@ -87,7 +93,7 @@ void receiver(int senderId) {
 
         r_bytes += bytes;
 
-        if (sprintf(path, "%s/%d/%s", mirror_dir, senderId, fileName) < 0) {
+        if (sprintf(path, "%s/%d/%s", mirror_dir, sid, fileName) < 0) {
             fprintf(stderr, "\n%s:%d-sprintf error\n", __FILE__, __LINE__);
             exit(EXIT_FAILURE);
         }
@@ -110,7 +116,7 @@ void receiver(int senderId) {
         if (fileName[fileNameLength - 1] != '/') {
 
             alarm(30);
-            if ((bytes = read(fd_fifo, &fileSize, sizeof(unsigned int))) < 0) {
+            if ((bytes = read(r_fd_fifo, &fileSize, sizeof(unsigned int))) < 0) {
                 fprintf(stderr, "\n%s:%d-file size read error: '%s'\n", __FILE__, __LINE__, strerror(errno));
                 exit(EXIT_FAILURE);
             }
@@ -120,7 +126,7 @@ void receiver(int senderId) {
 
             b = fileSize;
 
-            if ((fd_file = open(path, O_CREAT | O_WRONLY | O_TRUNC, S_IRUSR | S_IWUSR | S_IXUSR)) < 0) {
+            if ((r_fd_file = open(path, O_CREAT | O_WRONLY | O_TRUNC, S_IRUSR | S_IWUSR | S_IXUSR)) < 0) {
                 fprintf(stderr, "\n%s:%d-[%s] open error: '%s'\n", __FILE__, __LINE__, path, strerror(errno));
                 exit(EXIT_FAILURE);
             }
@@ -128,7 +134,7 @@ void receiver(int senderId) {
             while (b > 0) {
 
                 alarm(30);
-                if ((bytes = read(fd_fifo, buffer, b > buffer_size ? buffer_size : b)) < 0) {
+                if ((bytes = read(r_fd_fifo, buffer, b > buffer_size ? buffer_size : b)) < 0) {
                     fprintf(stderr, "\n%s:%d-fifo read error: '%s'\n", __FILE__, __LINE__, strerror(errno));
                     exit(EXIT_FAILURE);
                 }
@@ -136,7 +142,7 @@ void receiver(int senderId) {
 
                 r_bytes += bytes;
 
-                if (write(fd_file, buffer, (size_t) bytes) == -1) {
+                if (write(r_fd_file, buffer, (size_t) bytes) == -1) {
                     fprintf(stderr, "\n%s:%d-file write error: '%s'\n", __FILE__, __LINE__, strerror(errno));
                     exit(EXIT_FAILURE);
                 }
@@ -146,18 +152,18 @@ void receiver(int senderId) {
 
             r_files++;
 
-            close(fd_file);
+            close(r_fd_file);
         }
     }
 
-    close(fd_fifo);
+    close(r_fd_fifo);
 
-    unlink(fifo);
+    unlink(r_fifo);
 
     /* Send a signal to the parent process to inform that everything went well!*/
-    //kill(getppid(), SIGUSR2);
+    kill(getppid(), SIGUSR1);
 
-    //fprintf(stdout, "\nC[%d:%d]-R[%d:%d]:-Files received:[%lu]-Bytes received:[%lu]\n", id, getppid(), senderId,getpid(), r_files, r_bytes);
-/*    fprintf(stdout, "\nC[%d:%d] - R[%d:%d]: All files received successfully.\n", id, getppid(), senderId,
-            getpid());*/
+    fprintf(stdout, "\nC[%d:%d]-R[%d:%d]:-FINISH - Receive %lu files (Total bytes %lu bytes)\n", id, getppid(), sid,
+            getpid(), r_files, r_bytes);
+
 }

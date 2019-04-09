@@ -102,31 +102,36 @@ void readOptions(
 }
 
 /**
+ * @Signal_handler
  * Interupt or quit action*/
 void sig_int_quit_action(int signal) {
-    char *id_path = NULL;
+    char id_path[PATH_MAX + 1];
     size_t lb = 0;
 
     printf("sig_int_quit_action ::: signo: %d\n", signal);
 
     rmdir(mirror_dir);
 
-    lb = (size_t) (strlen(common_dir) + digits(id)) + 5;
-    if (!(id_path = malloc(lb))) {
-        exit(EXIT_FAILURE);
-    }
-
     sprintf(id_path, "%s/%d.id", common_dir, id);
 
     if (unlink(id_path) < 0) {
         fprintf(stderr, "\n%s:%d-[%s] unlink error: '%s'\n", __FILE__, __LINE__, id_path, strerror(errno));
     }
-
     //free(id_path);
 
     quit = true;
 }
 
+/**
+ * @Signal_handler
+ * Child finish*/
+void sig_usr_1_action(int signal) {
+    fprintf(stderr, "\n%s:%d-Client: [%d:%d]: child send finish signal!\n", __FILE__, __LINE__, id, getpid());
+}
+
+/**
+ * @Signal_handler
+ * Child alarm timeout*/
 void sig_usr_2_action(int signal) {
     fprintf(stderr, "\n%s:%d-Client: [%d:%d]: child send alarm timeout!\n", __FILE__, __LINE__, id, getpid());
 }
@@ -161,38 +166,30 @@ void clientDestroy(char *fn) {
 }
 
 /**
- * Check */
+ * @inotify_create_event
+ * */
 void create(char *filename) {
     struct stat s = {0};
-    char *buffer = NULL, *f = NULL, *fn = NULL, *f_suffix = NULL;
+    char id_file[PATH_MAX + 1], f[strlen(filename) + 1], *fn = NULL, *f_suffix = NULL;
     int client = 0;
-    size_t lb;
-
-    lb = strlen(common_dir) + strlen(filename) + 2;
-
-    /* Make a copy of filename.*/
-    if (!(f = malloc(sizeof(char) * strlen(filename) + 1))) {
-        exit(EXIT_FAILURE);
-    }
 
     strcpy(f, filename);
 
     client = (int) strtol(strtok(filename, "."), NULL, 10);
+
     if (client > 0 && client != id) {
         f_suffix = strtok(NULL, "\0");
         if (f_suffix != NULL && !strcmp(f_suffix, "id")) {
             if (HT_Insert(clientsHT, f, f, (void **) &fn)) {
 
-                if (!(buffer = malloc(lb))) {
+                /* Construct id file*/
+                if (sprintf(id_file, "%s/%s", common_dir, f) < 0) {
+                    fprintf(stderr, "\n%s:%d-sprintf error\n", __FILE__, __LINE__);
                     exit(EXIT_FAILURE);
                 }
 
-                /* Construct id file*/
-                sprintf(buffer, "%s/%s", common_dir, f);
-
-                if (!stat(buffer, &s)) {
+                if (!stat(id_file, &s)) {
                     if (!S_ISDIR(s.st_mode)) {
-
                         /* Create sender.*/
                         sender_pid = fork();
                         if (sender_pid < 0) {
@@ -215,25 +212,23 @@ void create(char *filename) {
                             receiver(client);
                             exit(EXIT_SUCCESS);
                         }
-
-                        sleep(1);
                     }
                 } else {
-                    fprintf(stderr, "\n%s:%d-[%s] stat error: '%s'\n", __FILE__, __LINE__, buffer, strerror(errno));
+                    fprintf(stderr, "\n%s:%d-[%s] stat error: '%s'\n", __FILE__, __LINE__, id_file, strerror(errno));
+                    exit(EXIT_FAILURE);
                 }
-                //free(buffer);
-
             } else {
-                fprintf(stderr, "\n---HT File: [%s] already exists!---\n", fn);
+                fprintf(stderr, "\n%s:%d-HT File: [%s] already exists!\n", __FILE__, __LINE__, fn);
             }
         }
     }
 }
 
 /**
- * Destroy child*/
+ * @inotify_delete_event
+ * */
 void destroy(char *filename) {
-    char *path = NULL, *f = NULL, *folder = NULL, *f_suffix = NULL;
+    char path[PATH_MAX + 1], *f = NULL, *folder = NULL, *f_suffix = NULL;
     int status = 0;
     __pid_t d_pid = 0;
 
@@ -249,13 +244,10 @@ void destroy(char *filename) {
 
     if (f_suffix != NULL && !strcmp(f_suffix, "id")) {
 
-        /* Allocate space for target dir.*/
-        if (!(path = malloc((size_t) (strlen(mirror_dir) + strlen(folder)) + 2))) {
-            exit(EXIT_FAILURE);
-        }
-
         /* Construct path.*/
-        sprintf(path, "%s/%s", mirror_dir, folder);
+        if (sprintf(path, "%s/%s", mirror_dir, folder) < 0) {
+            fprintf(stderr, "\n%s:%d-sprintf error\n", __FILE__, __LINE__);
+        }
 
         d_pid = fork();
         if (d_pid == 0) {
@@ -273,16 +265,15 @@ void destroy(char *filename) {
             exit(EXIT_FAILURE);
         }
     }
-    //free(f);
 }
 
 int main(int argc, char *argv[]) {
-    char event_buffer[EVENT_BUF_LEN], *buffer = NULL, *log_file = NULL;
+    char event_buffer[EVENT_BUF_LEN], id_file[PATH_MAX + 1], *log_file = NULL;
     FILE *file_id = NULL;
     int fd_inotify = 0, ev, wd, status = 0;;
     struct stat s = {0};
     ssize_t bytes;
-    static struct sigaction quit_action, child_alarm;
+    static struct sigaction quit_action, child_alarm, child_finish;
     size_t lb = 0;
     struct dirent *d = NULL;
     DIR *dir = NULL;
@@ -322,29 +313,24 @@ int main(int argc, char *argv[]) {
     /* Create common_dir*/
     mkdir(common_dir, S_IRUSR | S_IWUSR | S_IXUSR);
 
-    /* Prepare *.id file path*/
-    lb = (size_t) (strlen(common_dir) + digits(id)) + 5;
-    if ((buffer = malloc(lb))) {
-        sprintf(buffer, "%s/%d.id", common_dir, id);
-
-        /* Check if [id].id file exists.*/
-        if (!stat(buffer, &s)) {
-            fprintf(stderr, "\n'%s' already exists!\n", buffer);
-            exit(EXIT_FAILURE);
-        } else {
-            file_id = fopen(buffer, "w");
-            fprintf(file_id, "%d", (int) getpid());
-            fclose(file_id);
-        }
-        //free(buffer);
-
-    } else {
+    if (sprintf(id_file, "%s/%d.id", common_dir, id) < 0) {
+        fprintf(stderr, "\n%s:%d-sprintf error\n", __FILE__, __LINE__);
         exit(EXIT_FAILURE);
+    }
+
+    /* Check if [id].id file exists.*/
+    if (!stat(id_file, &s)) {
+        fprintf(stderr, "\n%s:%d-file '%s' already exists!\n", __FILE__, __LINE__, id_file);
+        exit(EXIT_FAILURE);
+    } else {
+        file_id = fopen(id_file, "w");
+        fprintf(file_id, "%d", (int) getpid());
+        fclose(file_id);
     }
 
     /* Check if log_file file already exists.*/
     if (!stat(log_file, &s)) {
-        fprintf(stderr, "\n'%s' file already exists!\n", log_file);
+        fprintf(stderr, "\n%s:%d-file '%s' already exists!\n", __FILE__, __LINE__, log_file);
         exit(EXIT_FAILURE);
     } else {
         if ((fd_log_file = open(log_file, O_CREAT | O_WRONLY | O_TRUNC, S_IRUSR | S_IWUSR | S_IXUSR)) < 0) {
@@ -354,17 +340,22 @@ int main(int argc, char *argv[]) {
     }
 
     /* Initialize inotify.*/
-    fd_inotify = inotify_init();
-    if (fd_inotify < 0) {
-        fprintf(stderr, "\n%s:%d-inotify_init error: '%s'\n", __FILE__, __LINE__, strerror(errno));
+    if ((fd_inotify = inotify_init()) < 0) {
+        fprintf(stderr, "\n%s:%d-i-notify_init error: '%s'\n", __FILE__, __LINE__, strerror(errno));
     }
 
-    /* Set custom signal action for SIGINT (^c) & SIGQUIT (^\) signals.*/
+    /* Set custom signal handler for SIGINT (^c) & SIGQUIT (^\) signals.*/
     quit_action.sa_handler = sig_int_quit_action;
     sigfillset(&(quit_action.sa_mask));
     sigaction(SIGINT, &quit_action, NULL);
     sigaction(SIGQUIT, &quit_action, NULL);
 
+    /* Set custom signal handler for SIGUSR1 (Child alarm timeout) signal.*/
+    child_finish.sa_handler = sig_usr_1_action;
+    sigfillset(&(child_finish.sa_mask));
+    sigaction(SIGUSR1, &child_finish, NULL);
+
+    /* Set custom signal handler for SIGUSR2 (Child alarm timeout) signal.*/
     child_alarm.sa_handler = sig_usr_2_action;
     sigfillset(&(child_alarm.sa_mask));
     sigaction(SIGUSR2, &child_alarm, NULL);
@@ -394,7 +385,7 @@ int main(int argc, char *argv[]) {
         closedir(dir);
     }
 
-    /* Read events*/
+    /* Read i-notify events*/
     while (!quit) {
         if ((bytes = read(fd_inotify, event_buffer, EVENT_BUF_LEN)) < 0) {
             fprintf(stderr, "\n%s:%d-i-notify event read error: '%s'\n", __FILE__, __LINE__, strerror(errno));
