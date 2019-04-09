@@ -26,9 +26,9 @@
 typedef void *pointer;
 
 Hashtable clientsHT = NULL;
-char *common_dir = NULL, *input_dir = NULL, *mirror_dir = NULL, *log_file = NULL;
+char *common_dir = NULL, *input_dir = NULL, *mirror_dir = NULL;
 unsigned long int buffer_size = 0;
-int id = 0;
+int id = 0, fd_log_file = 0;
 __pid_t sender_pid = 0, receiver_pid = 0;
 bool quit = false;
 
@@ -40,7 +40,7 @@ unsigned int digits(int n) {
 }
 
 void wrongOptionValue(char *opt, char *val) {
-    fprintf(stdout, "Wrong value [%s] for option '%s'\n", val, opt);
+    fprintf(stderr, "\nWrong value [%s] for option '%s'\n", val, opt);
     exit(EXIT_FAILURE);
 }
 
@@ -119,20 +119,16 @@ void sig_int_quit_action(int signal) {
     sprintf(id_path, "%s/%d.id", common_dir, id);
 
     if (unlink(id_path) < 0) {
-        perror(id_path);
-    }
-
-    if (receiver_pid) {
-        kill(receiver_pid, SIGUSR2);
-    }
-
-    if (sender_pid) {
-        kill(sender_pid, SIGUSR2);
+        fprintf(stderr, "\n%s:%d\t[%s] unlink error: '%s'\n", __FILE__, __LINE__, id_path, strerror(errno));
     }
 
     free(id_path);
 
     quit = true;
+}
+
+void sig_usr_2_action(int signal) {
+    fprintf(stderr, "\n%s:%d\tClient: [%d:%d]: child send alarm timeout!\n", __FILE__, __LINE__, id, getpid());
 }
 
 /**
@@ -197,7 +193,7 @@ void create(char *filename) {
                         /* Create sender.*/
                         sender_pid = fork();
                         if (sender_pid < 0) {
-                            perror("fork");
+                            fprintf(stderr, "\n%s:%d\tSender fork error: '%s'\n", __FILE__, __LINE__, strerror(errno));
                             exit(EXIT_FAILURE);
                         }
                         if (sender_pid == 0) {
@@ -208,7 +204,8 @@ void create(char *filename) {
                         /* Create receiver.*/
                         receiver_pid = fork();
                         if (receiver_pid < 0) {
-                            perror("fork");
+                            fprintf(stderr, "\n%s:%d\tReceiver fork error: '%s'\n", __FILE__, __LINE__,
+                                    strerror(errno));
                             exit(EXIT_FAILURE);
                         }
                         if (receiver_pid == 0) {
@@ -219,7 +216,7 @@ void create(char *filename) {
                         sleep(1);
                     }
                 } else {
-                    perror("stat");
+                    fprintf(stderr, "\n%s:%d\t[%s] stat error: '%s'\n", __FILE__, __LINE__, buffer, strerror(errno));
                 }
                 free(buffer);
 
@@ -258,7 +255,7 @@ void destroy(char *filename) {
         d_pid = fork();
         if (d_pid == 0) {
             execlp("rm", "-r", "-f", path, NULL);
-            perror("execlp");
+            fprintf(stderr, "\n%s:%d\t[%s] execlp error: '%s'\n", __FILE__, __LINE__, path, strerror(errno));
         } else if (d_pid > 0) {
             waitpid(d_pid, &status, 0);
             if (WIFEXITED(status) && WEXITSTATUS(status) == 0) {
@@ -267,7 +264,7 @@ void destroy(char *filename) {
                 }
             }
         } else {
-            fprintf(stderr, "Fork error!");
+            fprintf(stderr, "\n%s:%d\tfork error: '%s'\n", __FILE__, __LINE__, strerror(errno));
             exit(EXIT_FAILURE);
         }
     }
@@ -275,12 +272,12 @@ void destroy(char *filename) {
 }
 
 int main(int argc, char *argv[]) {
-    char event_buffer[EVENT_BUF_LEN], *buffer = NULL;
-    FILE *file_id = NULL, *file_log = NULL;
-    int fd_inotify = 0, ev, wd;
+    char event_buffer[EVENT_BUF_LEN], *buffer = NULL, *log_file = NULL;
+    FILE *file_id = NULL;
+    int fd_inotify = 0, ev, wd, status = 0;;
     struct stat s = {0};
     ssize_t bytes;
-    static struct sigaction act;
+    static struct sigaction quit_action, child_alarm;
     size_t lb = 0;
     struct dirent *d = NULL;
     DIR *dir = NULL;
@@ -301,17 +298,17 @@ int main(int argc, char *argv[]) {
     /* Check if input_dir directory exists.*/
     if (!stat(input_dir, &s)) {
         if (!S_ISDIR(s.st_mode)) {
-            fprintf(stderr, "'%s' is not a directory!\n", input_dir);
+            fprintf(stderr, "\n'%s' is not a directory!\n", input_dir);
             exit(EXIT_FAILURE);
         }
     } else {
-        perror(input_dir);
+        fprintf(stderr, "\n%s:%d\t[%s] stat error: '%s'\n", __FILE__, __LINE__, input_dir, strerror(errno));
         exit(EXIT_FAILURE);
     }
 
     /* Check if mirror_dir directory already exists.*/
     if (!stat(mirror_dir, &s)) {
-        fprintf(stderr, "'%s' directory already exists!\n", mirror_dir);
+        fprintf(stderr, "\n'%s' directory already exists!\n", mirror_dir);
         exit(EXIT_FAILURE);
     } else {
         mkdir(mirror_dir, S_IRUSR | S_IWUSR | S_IXUSR);
@@ -327,7 +324,7 @@ int main(int argc, char *argv[]) {
 
         /* Check if [id].id file exists.*/
         if (!stat(buffer, &s)) {
-            fprintf(stderr, "'%s' already exists!\n", buffer);
+            fprintf(stderr, "\n'%s' already exists!\n", buffer);
             exit(EXIT_FAILURE);
         } else {
             file_id = fopen(buffer, "w");
@@ -342,23 +339,30 @@ int main(int argc, char *argv[]) {
 
     /* Check if log_file file already exists.*/
     if (!stat(log_file, &s)) {
-        fprintf(stderr, "'%s' file already exists!\n", log_file);
+        fprintf(stderr, "\n'%s' file already exists!\n", log_file);
         exit(EXIT_FAILURE);
     } else {
-        file_log = fopen(log_file, "w");
+        if ((fd_log_file = open(log_file, O_CREAT | O_WRONLY | O_TRUNC, S_IRUSR | S_IWUSR | S_IXUSR)) < 0) {
+            fprintf(stderr, "\n%s:%d\t[%s] open error: '%s'\n", __FILE__, __LINE__, log_file, strerror(errno));
+            exit(EXIT_FAILURE);
+        }
     }
 
     /* Initialize inotify.*/
     fd_inotify = inotify_init();
     if (fd_inotify < 0) {
-        perror("i-notify_init");
+        fprintf(stderr, "\n%s:%d\tinotify_init error: '%s'\n", __FILE__, __LINE__, strerror(errno));
     }
 
     /* Set custom signal action for SIGINT (^c) & SIGQUIT (^\) signals.*/
-    act.sa_handler = sig_int_quit_action;
-    sigfillset(&(act.sa_mask));
-    sigaction(SIGINT, &act, NULL);
-    sigaction(SIGQUIT, &act, NULL);
+    quit_action.sa_handler = sig_int_quit_action;
+    sigfillset(&(quit_action.sa_mask));
+    sigaction(SIGINT, &quit_action, NULL);
+    sigaction(SIGQUIT, &quit_action, NULL);
+
+    child_alarm.sa_handler = sig_usr_2_action;
+    sigfillset(&(child_alarm.sa_mask));
+    sigaction(SIGUSR2, &child_alarm, NULL);
 
     /* Add common_dir at watch list to detect changes.*/
     wd = inotify_add_watch(fd_inotify, common_dir, IN_CREATE | IN_DELETE);
@@ -385,11 +389,10 @@ int main(int argc, char *argv[]) {
         closedir(dir);
     }
 
-    printf("\n:READ EVENTS:\n\n");
-
+    /* Read events*/
     while (!quit) {
         if ((bytes = read(fd_inotify, event_buffer, EVENT_BUF_LEN)) < 0) {
-            perror("read i-notify event");
+            fprintf(stderr, "\n%s:%d\ti-notify event read error: '%s'\n", __FILE__, __LINE__, strerror(errno));
         }
         ev = 0;
         while (ev < bytes) {
@@ -416,6 +419,9 @@ int main(int argc, char *argv[]) {
     /* Close the i-notify instance.*/
     close(fd_inotify);
 
-    fclose(file_log);
+    close(fd_log_file);
+
+    //while ((wpid = wait(&status)) > 0);
+
     return 0;
 }

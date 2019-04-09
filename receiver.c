@@ -13,7 +13,7 @@ unsigned long int r_files = 0, r_bytes = 0;
 void _r_alarm_action(int signo) {
     fprintf(stderr, "\nClient: [%d:%d], %d: alarm timeout!\n", id, getppid(), getpid());
     kill(getppid(), SIGUSR2);
-    exit(3);
+    exit(EXIT_FAILURE);
 }
 
 /**
@@ -29,7 +29,8 @@ void receiver(int senderId) {
     ssize_t bytes = 0;
     size_t lb = 0;
 
-    fprintf(stdout, "\nC[%d:%d] - R[%d:%d]\n", id, getppid(), senderId, getpid());
+    //fprintf(stdout, "C[%d:%d]\tR[%d:%d]\n", id, getppid(), senderId, getpid());
+    //fprintf(stdout, "C[%d]\tR[%d]\n", id, senderId);
 
     r_files = 0;
     r_bytes = 0;
@@ -42,7 +43,7 @@ void receiver(int senderId) {
     sigaction(SIGALRM, &act, NULL);
 
     if (!(fifo = malloc((strlen(common_dir) + digits(senderId) + digits(id) + 15)))) {
-        perror("malloc");
+        exit(EXIT_FAILURE);
     }
 
     /* Construct fifo filename*/
@@ -50,14 +51,20 @@ void receiver(int senderId) {
 
     /* Create fifo*/
     if ((mkfifo(fifo, S_IRUSR | S_IWUSR | S_IXUSR) < 0) && (errno != EEXIST)) {
-        perror("can't create fifo");
+        fprintf(stderr, "\n%s:%d\t[%s] mkfifo error: '%s'\n", __FILE__, __LINE__, fifo, strerror(errno));
+        exit(EXIT_FAILURE);
     }
 
     alarm(30);
 
-    fd_fifo = open(fifo, O_RDONLY);
+    /* Open fifo.*/
+    if ((fd_fifo = open(fifo, O_RDONLY)) < 0) {
+        fprintf(stderr, "\n%s:%d\t[%s] open error: '%s'\n", __FILE__, __LINE__, fifo, strerror(errno));
+        exit(1);
+    }
 
     alarm(0);
+
 
     while (1) {
 
@@ -65,7 +72,8 @@ void receiver(int senderId) {
 
         /* Read filename size.*/
         if ((bytes = read(fd_fifo, &fileNameLength, sizeof(unsigned short int))) < 0) {
-            perror("problem in reading");
+            fprintf(stderr, "\n%s:%d\t[%d] read error: '%s'\n", __FILE__, __LINE__, fileNameLength, strerror(errno));
+            exit(EXIT_FAILURE);
         }
 
         alarm(0);
@@ -77,14 +85,15 @@ void receiver(int senderId) {
         }
 
         if (!(fileName = malloc((size_t) fileNameLength))) {
-            exit(1);
+            exit(EXIT_FAILURE);
         }
 
         alarm(30);
 
         /* Read filename.*/
         if ((bytes = read(fd_fifo, fileName, (size_t) fileNameLength)) < 0) {
-            perror("problem in reading");
+            fprintf(stderr, "\n%s:%d\t[%s] read error: '%s'\n", __FILE__, __LINE__, fileName, strerror(errno));
+            exit(EXIT_FAILURE);
         }
 
         alarm(0);
@@ -94,7 +103,7 @@ void receiver(int senderId) {
         lb = strlen(mirror_dir) + digits(senderId) + fileNameLength + 3;
 
         if (!(path = malloc(lb))) {
-            exit(1);
+            exit(EXIT_FAILURE);
         }
 
         snprintf(path, lb, "%s/%d/%s", mirror_dir, senderId, fileName);
@@ -120,7 +129,8 @@ void receiver(int senderId) {
 
             /* Read file size.*/
             if ((bytes = read(fd_fifo, &fileSize, sizeof(unsigned int))) < 0) {
-                perror("problem in reading");
+                fprintf(stderr, "\n%s:%d\tfile size read error: '%s'\n", __FILE__, __LINE__, strerror(errno));
+                exit(EXIT_FAILURE);
             }
 
             r_bytes += bytes;
@@ -131,7 +141,8 @@ void receiver(int senderId) {
 
             fd_file = open(path, O_CREAT | O_WRONLY | O_TRUNC, S_IRUSR | S_IWUSR | S_IXUSR);
             if (fd_file < 0) {
-                perror("Open file call fail");
+                fprintf(stderr, "\n%s:%d\t[%s] open error: '%s'\n", __FILE__, __LINE__, path, strerror(errno));
+                exit(EXIT_FAILURE);
             }
 
             while (b > 0) {
@@ -139,9 +150,10 @@ void receiver(int senderId) {
 
                 alarm(30);
 
-                /* Read file size.*/
+                /* Read file from fifo.*/
                 if ((bytes = read(fd_fifo, buffer, b > buffer_size ? buffer_size : b)) < 0) {
-                    perror("problem in reading");
+                    fprintf(stderr, "\n%s:%d\tfifo read error: '%s'\n", __FILE__, __LINE__, strerror(errno));
+                    exit(EXIT_FAILURE);
                 }
 
                 r_bytes += bytes;
@@ -150,7 +162,8 @@ void receiver(int senderId) {
 
                 /* Write the bytes in file.*/
                 if (write(fd_file, buffer, (size_t) bytes) == -1) {
-                    perror("Error in Writing");
+                    fprintf(stderr, "\n%s:%d\tfile write error: '%s'\n", __FILE__, __LINE__, strerror(errno));
+                    exit(EXIT_FAILURE);
                 }
                 b -= bytes;
             };
@@ -172,12 +185,9 @@ void receiver(int senderId) {
     free(fifo);
 
     /* Send a signal to the parent process to inform that everything went well!*/
-    kill(getppid(), SIGUSR2);
+    //kill(getppid(), SIGUSR2);
 
-    fprintf(stdout, "\nC[%d:%d] - R[%d:%d]: Files received: [%lu]\n", id, getppid(), senderId, getpid(),
-            r_files);
-    fprintf(stdout, "\nC[%d:%d] - R[%d:%d]: Bytes received: [%lu]\n", id, getppid(), senderId, getpid(),
-            r_bytes);
-    fprintf(stdout, "\nC[%d:%d] - R[%d:%d]: All files received successfully.\n", id, getppid(), senderId,
-            getpid());
+    //fprintf(stdout, "\nC[%d:%d]\tR[%d:%d]:\tFiles received:[%lu]\tBytes received:[%lu]\n", id, getppid(), senderId,getpid(), r_files, r_bytes);
+/*    fprintf(stdout, "\nC[%d:%d] - R[%d:%d]: All files received successfully.\n", id, getppid(), senderId,
+            getpid());*/
 }

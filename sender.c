@@ -12,7 +12,7 @@
 void _s_alarm_action(int signo) {
     fprintf(stderr, "\nClient: [%d:%d], %d: alarm timeout!\n", id, getppid(), getpid());
     kill(getppid(), SIGUSR2);
-    exit(2);
+    exit(EXIT_FAILURE);
 }
 
 /**
@@ -37,7 +37,8 @@ void rec_cp(int fd_fifo, const char *path, unsigned long *s_bytes, unsigned long
             lb = strlen(path) + strlen(d->d_name) + 2;
 
             if (!(r_path = malloc(lb))) {
-                perror("malloc");
+                //kill(getppid(), SIGUSR1);
+                exit(EXIT_FAILURE);
             }
 
             /* Construct real path.*/
@@ -54,18 +55,17 @@ void rec_cp(int fd_fifo, const char *path, unsigned long *s_bytes, unsigned long
 
                     fileNameLength = (unsigned short int) strlen(fileName) + 1;
 
-
                     alarm(30);
                     /* Write length of filename/directory to pipe.*/
                     if ((bytes = write(fd_fifo, &fileNameLength, sizeof(unsigned short int))) < 0) {
-                        perror("Error in Writing");
+                        fprintf(stderr, "\n%s:%d\tfifo write error: '%s'\n", __FILE__, __LINE__, strerror(errno));
                     }
                     alarm(0);
 
                     *s_bytes += bytes;
 
                     if (!(dirName = malloc((size_t) fileNameLength))) {
-                        perror("malloc");
+                        fprintf(stderr, "\n%s:%d\tmalloc error: '%s'\n", __FILE__, __LINE__, strerror(errno));
                     }
 
                     strcpy(dirName, fileName);
@@ -74,7 +74,7 @@ void rec_cp(int fd_fifo, const char *path, unsigned long *s_bytes, unsigned long
                     alarm(30);
                     /* Write relative path of directory to pipe.*/
                     if ((bytes = write(fd_fifo, dirName, (size_t) fileNameLength)) < 0) {
-                        perror("Error in Writing");
+                        fprintf(stderr, "\n%s:%d\tfifo write error: '%s'\n", __FILE__, __LINE__, strerror(errno));
                     }
 
                     alarm(0);
@@ -92,7 +92,7 @@ void rec_cp(int fd_fifo, const char *path, unsigned long *s_bytes, unsigned long
 
                     /* Write length of filename to pipe.*/
                     if ((bytes = write(fd_fifo, &fileNameLength, sizeof(unsigned short int))) < 0) {
-                        perror("Error in Writing");
+                        fprintf(stderr, "\n%s:%d\tfifo write error: '%s'\n", __FILE__, __LINE__, strerror(errno));
                     }
 
                     alarm(0);
@@ -103,7 +103,7 @@ void rec_cp(int fd_fifo, const char *path, unsigned long *s_bytes, unsigned long
 
                     /* Write relative path to pipe.*/
                     if ((bytes = write(fd_fifo, fileName, strlen(fileName))) < 0) {
-                        perror("Error in Writing");
+                        fprintf(stderr, "\n%s:%d\tfifo write error: '%s'\n", __FILE__, __LINE__, strerror(errno));
                     }
 
                     alarm(0);
@@ -112,14 +112,15 @@ void rec_cp(int fd_fifo, const char *path, unsigned long *s_bytes, unsigned long
 
                     /* Open file*/
                     if ((fd_file = open(r_path, O_RDONLY)) < 0) {
-                        perror("Open call fail");
+                        fprintf(stderr, "\n%s:%d\tfile %s open error: '%s'\n", __FILE__, __LINE__, r_path,
+                                strerror(errno));
                     }
 
                     alarm(30);
 
                     /* Write file size.*/
                     if ((bytes = write(fd_fifo, &fileSize, sizeof(unsigned int))) < 0) {
-                        perror("Error in Writing");
+                        fprintf(stderr, "\n%s:%d\tfifo write error: '%s'\n", __FILE__, __LINE__, strerror(errno));
                     }
 
                     alarm(0);
@@ -134,20 +135,20 @@ void rec_cp(int fd_fifo, const char *path, unsigned long *s_bytes, unsigned long
 
                                 /* Write file.*/
                                 if ((bytes = write(fd_fifo, buffer, (size_t) n)) < 0) {
-                                    perror("Error in Writing");
+                                    fprintf(stderr, "\n%s:%d\tfifo write error: '%s'\n", __FILE__, __LINE__,
+                                            strerror(errno));
                                 }
 
                                 alarm(0);
 
                                 *s_bytes += bytes;
-
                             }
                         } while (n == buffer_size);
                     }
                     (*s_files)++;
                 }
             } else {
-                perror("File not found");
+                fprintf(stderr, "\n%s:%d\t[%s] stat error: '%s'\n", __FILE__, __LINE__, r_path, strerror(errno));
             }
             free(r_path);
         }
@@ -165,7 +166,8 @@ void sender(int receiverId) {
     int fd_fifo = 0;
     ssize_t bytes = 0;
 
-    fprintf(stdout, "\nC[%d:%d] - S[%d:%d]\n", id, getppid(), receiverId, getpid());
+    //fprintf(stdout, "C[%d:%d]\tS[%d:%d]\n", id, getppid(), receiverId, getpid());
+    //fprintf(stdout, "C[%d]\tS[%d]\n", id, receiverId);
 
     /* set up the signal handler*/
     act.sa_handler = _s_alarm_action;
@@ -175,7 +177,7 @@ void sender(int receiverId) {
     sigaction(SIGALRM, &act, NULL);
 
     if (!(fifo = malloc((strlen(common_dir) + digits(id) + digits(receiverId) + 15)))) {
-        perror("malloc");
+        fprintf(stderr, "\n%s:%d\tmalloc error: '%s'\n", __FILE__, __LINE__, strerror(errno));
     }
 
     /* Construct fifo filename*/
@@ -183,14 +185,14 @@ void sender(int receiverId) {
 
     /* Create fifo*/
     if ((mkfifo(fifo, S_IRUSR | S_IWUSR | S_IXUSR) < 0) && (errno != EEXIST)) {
-        perror("can't create fifo");
+        fprintf(stderr, "\n%s:%d\t[%s] mkfifo error: '%s'\n", __FILE__, __LINE__, fifo, strerror(errno));
     }
 
     alarm(30);
 
     /* Open fifo*/
     if ((fd_fifo = open(fifo, O_WRONLY)) < 0) {
-        perror("Open fifo error");
+        fprintf(stderr, "\n%s:%d\t[%s] fifo open error: '%s'\n", __FILE__, __LINE__, fifo, strerror(errno));
         exit(1);
     }
 
@@ -204,7 +206,7 @@ void sender(int receiverId) {
     alarm(30);
 
     if ((bytes = write(fd_fifo, &fileNameLength, sizeof(unsigned short int))) < 0) {
-        perror("Error in Writing");
+        fprintf(stderr, "\n%s:%d\tfifo write error: '%s'\n", __FILE__, __LINE__, strerror(errno));
         exit(2);
     }
 
@@ -219,13 +221,10 @@ void sender(int receiverId) {
 
     free(fifo);
 
-    kill(getppid(), SIGUSR2);
+    //kill(getppid(), SIGUSR2);
 
-    fprintf(stdout, "\nC[%d:%d] - S[%d:%d]: Files send: [%lu]\n", id, getppid(), receiverId, getpid(),
-            s_files);
-    fprintf(stdout, "\nC[%d:%d] - S[%d:%d]: Bytes send: [%lu]\n", id, getppid(), receiverId, getpid(),
-            s_bytes);
-    fprintf(stdout, "\nC[%d:%d] - S[%d:%d]: All files send successfully.\n", id, getppid(), receiverId,
-            getpid());
+    //fprintf(stdout, "\nC[%d:%d]\tS[%d:%d]:\tFiles send:[%lu]\tBytes send:[%lu]\n", id, getppid(), receiverId,getpid(), s_files, s_bytes);
+/*    fprintf(stdout, "\nC[%d:%d] - S[%d:%d]: All files send successfully.\n", id, getppid(), receiverId,
+            getpid());*/
 
 }
