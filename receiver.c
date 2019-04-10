@@ -11,18 +11,34 @@
 #define TIMEOUT 30
 
 unsigned long int r_files = 0, r_bytes = 0;
-int r_fd_fifo = 0, r_fd_file = 0;
+int r_fd_fifo = 0, r_fd_file = 0, r_fifo_status = 0;
 char r_fifo[PATH_MAX + 1];
+
+void r_term() {
+    /* Inform parent.*/
+    kill(getppid(), SIGUSR2);
+
+    /* Close fifo if is open.*/
+    if (r_fd_fifo > 0) {
+        close(r_fd_fifo);
+    }
+
+    /* Delete fifo file.*/
+    if (r_fifo_status == 0) {
+        unlink(r_fifo);
+    }
+
+    /* Close file.*/
+    if (r_fd_file > 0) {
+        close(r_fd_file);
+    }
+
+    exit(EXIT_FAILURE);
+}
 
 void _r_alarm_action(int signo) {
     fprintf(stderr, "\nClient: [%d:%d], %d: alarm timeout!\n", id, getppid(), getpid());
-
-    close(r_fd_fifo);
-
-    unlink(r_fifo);
-
-    kill(getppid(), SIGUSR2);
-    exit(EXIT_FAILURE);
+    r_term();
 }
 
 /**
@@ -32,15 +48,18 @@ void receiver(int sid) {
     unsigned long int offset = 0;
     static struct sigaction act;
     struct stat s = {0};
-    int b = 0, f = 0;
+    int b = 0;
     __uint16_t fileNameLength = 0;
     __uint32_t fileSize = 0;
     ssize_t bytes = 0;
 
     fprintf(stdout, "C[%d:%d]-R[%d:%d]\n", id, getppid(), sid, getpid());
 
+    r_fd_fifo = 0;
+    r_fd_file = 0;
     r_files = 0;
     r_bytes = 0;
+    r_fifo_status = 0;
 
     /* set up the signal handler*/
     act.sa_handler = _r_alarm_action;
@@ -52,23 +71,20 @@ void receiver(int sid) {
     /* Construct fifo filename*/
     if (sprintf(r_fifo, "%s/id%d_to_id%d.fifo", common_dir, sid, id) < 0) {
         fprintf(stderr, "\n%s:%d-sprintf error\n", __FILE__, __LINE__);
-        exit(EXIT_FAILURE);
+        r_term();
     }
 
     /* Create fifo*/
-    if ((f = mkfifo(r_fifo, S_IRUSR | S_IWUSR | S_IXUSR) < 0) && (errno != EEXIST)) {
+    if ((r_fifo_status = mkfifo(r_fifo, S_IRUSR | S_IWUSR | S_IXUSR) < 0) && (errno != EEXIST)) {
         fprintf(stderr, "\n%s:%d-[%s] mkfifo error: '%s'\n", __FILE__, __LINE__, r_fifo, strerror(errno));
-        exit(EXIT_FAILURE);
+        r_term();
     }
 
     alarm(TIMEOUT);
-
-    /* Open fifo.*/
     if ((r_fd_fifo = open(r_fifo, O_RDONLY)) < 0) {
         fprintf(stderr, "\n%s:%d-[%s] open error: '%s'\n", __FILE__, __LINE__, r_fifo, strerror(errno));
-        exit(EXIT_FAILURE);
+        r_term();
     }
-
     alarm(0);
 
     while (1) {
@@ -76,7 +92,7 @@ void receiver(int sid) {
         alarm(TIMEOUT);
         if ((bytes = read(r_fd_fifo, &fileNameLength, sizeof(__uint16_t))) < 0) {
             fprintf(stderr, "\n%s:%d-[%d] read error: '%s'\n", __FILE__, __LINE__, fileNameLength, strerror(errno));
-            exit(EXIT_FAILURE);
+            r_term();
         }
         alarm(0);
 
@@ -89,7 +105,7 @@ void receiver(int sid) {
         alarm(TIMEOUT);
         if ((bytes = read(r_fd_fifo, fileName, (size_t) fileNameLength)) < 0) {
             fprintf(stderr, "\n%s:%d-[%s] read error: '%s'\n", __FILE__, __LINE__, fileName, strerror(errno));
-            exit(EXIT_FAILURE);
+            r_term();
         }
         alarm(0);
 
@@ -101,7 +117,7 @@ void receiver(int sid) {
 
         if (sprintf(path, "%s/%d/%s", mirror_dir, sid, fileName) < 0) {
             fprintf(stderr, "\n%s:%d-sprintf error\n", __FILE__, __LINE__);
-            exit(EXIT_FAILURE);
+            r_term();
         }
 
         /* Make dirs if not exists.*/
@@ -124,7 +140,7 @@ void receiver(int sid) {
             alarm(TIMEOUT);
             if ((bytes = read(r_fd_fifo, &fileSize, sizeof(__uint32_t))) < 0) {
                 fprintf(stderr, "\n%s:%d-file size read error: '%s'\n", __FILE__, __LINE__, strerror(errno));
-                exit(EXIT_FAILURE);
+                r_term();
             }
             alarm(0);
 
@@ -134,15 +150,14 @@ void receiver(int sid) {
 
             if ((r_fd_file = open(path, O_CREAT | O_WRONLY | O_TRUNC, S_IRUSR | S_IWUSR | S_IXUSR)) < 0) {
                 fprintf(stderr, "\n%s:%d-[%s] open error: '%s'\n", __FILE__, __LINE__, path, strerror(errno));
-                exit(EXIT_FAILURE);
+                r_term();
             }
 
             while (b > 0) {
-
                 alarm(TIMEOUT);
                 if ((bytes = read(r_fd_fifo, buffer, b > buffer_size ? buffer_size : b)) < 0) {
                     fprintf(stderr, "\n%s:%d-fifo read error: '%s'\n", __FILE__, __LINE__, strerror(errno));
-                    exit(EXIT_FAILURE);
+                    r_term();
                 }
                 alarm(0);
 
@@ -150,7 +165,7 @@ void receiver(int sid) {
 
                 if (write(r_fd_file, buffer, (size_t) bytes) == -1) {
                     fprintf(stderr, "\n%s:%d-file write error: '%s'\n", __FILE__, __LINE__, strerror(errno));
-                    exit(EXIT_FAILURE);
+                    r_term();
                 }
 
                 b -= bytes;
@@ -164,7 +179,7 @@ void receiver(int sid) {
 
     close(r_fd_fifo);
 
-    if (f == 0) {
+    if (r_fifo_status == 0) {
         unlink(r_fifo);
     }
 
@@ -175,6 +190,8 @@ void receiver(int sid) {
             getpid(), r_files, r_bytes);
 
     fprintf(logfile, "br %lu\n", r_bytes);
+    fflush(logfile);
+
     fprintf(logfile, "fr %lu\n", r_files);
     fflush(logfile);
 }

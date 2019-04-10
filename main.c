@@ -257,7 +257,7 @@ void destroy(char *filename) {
         while ((status = _rmdir(path)) && retry-- > 0);
 
         if (status == EXIT_SUCCESS) {
-            printf("Dir '%s' removed successfully!\n", path);
+            printf("\n-Dir '%s' removed because client has left!\n", path);
             if (!HT_Remove(clientsHT, f, f, false)) {
                 fprintf(stderr, "\n%s:%d-HT_Remove error\n", __FILE__, __LINE__);
             }
@@ -418,7 +418,7 @@ int main(int argc, char *argv[]) {
 
     while ((wpid = wait(&status)) > 0);
 
-    fprintf(logfile, "cl %d\n", id);
+    fprintf(logfile, "dn\n");
     fflush(logfile);
 
     if (unlink(id_file) < 0) {
