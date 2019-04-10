@@ -28,13 +28,13 @@ void _r_alarm_action(int signo) {
 /**
  * Receiver child*/
 void receiver(int sid) {
+    char buffer[buffer_size], ch, fileName[PATH_MAX + 1], *pch = NULL, path[PATH_MAX + 1];
+    unsigned long int offset = 0;
+    static struct sigaction act;
+    struct stat s = {0};
+    int b = 0, f = 0;
     __uint16_t fileNameLength = 0;
     __uint32_t fileSize = 0;
-    static struct sigaction act;
-    unsigned long int offset = 0;
-    struct stat s = {0};
-    char buffer[buffer_size], ch, fileName[PATH_MAX + 1], *pch = NULL, path[PATH_MAX + 1];
-    int b = 0, f = 0;
     ssize_t bytes = 0;
 
     fprintf(stdout, "C[%d:%d]-R[%d:%d]\n", id, getppid(), sid, getpid());

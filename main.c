@@ -35,9 +35,27 @@ FILE *logfile = NULL;
 
 /**
  * Calculate number of digits of specific int.*/
-unsigned int digits(int n) {
+unsigned int _digits(int n) {
     if (n == 0) return 1;
     return (unsigned int) floor(log10(abs(n))) + 1;
+}
+
+int _rmdir(char *dir) {
+    int status = EXIT_FAILURE;
+    __pid_t d_pid = 0;
+    d_pid = fork();
+    if (d_pid == 0) {
+        execlp("rm", "rm", "-r", "-f", dir, NULL);
+        fprintf(stderr, "\n%s:%d-[%s] execlp error: '%s'\n", __FILE__, __LINE__, dir, strerror(errno));
+    } else if (d_pid > 0) {
+        waitpid(d_pid, &status, 0);
+        if (WIFEXITED(status) && WEXITSTATUS(status) == 0) {
+            return WEXITSTATUS(status);
+        }
+    } else {
+        fprintf(stderr, "\n%s:%d-fork error: '%s'\n", __FILE__, __LINE__, strerror(errno));
+    }
+    return status;
 }
 
 void wrongOptionValue(char *opt, char *val) {
@@ -106,19 +124,7 @@ void readOptions(
  * @Signal_handler
  * Interupt or quit action*/
 void sig_int_quit_action(int signal) {
-    char id_path[PATH_MAX + 1];
-
-    printf("sig_int_quit_action ::: signo: %d\n", signal);
-
-    rmdir(mirror_dir);
-
-    sprintf(id_path, "%s/%d.id", common_dir, id);
-
-    if (unlink(id_path) < 0) {
-        fprintf(stderr, "\n%s:%d-[%s] unlink error: '%s'\n", __FILE__, __LINE__, id_path, strerror(errno));
-    }
-    //free(id_path);
-
+    fprintf(stdout, "\n-Client: [%d:%d]: signal: %d - exiting...\n", id, getpid(), signal);
     quit = true;
 }
 
@@ -126,14 +132,14 @@ void sig_int_quit_action(int signal) {
  * @Signal_handler
  * Child finish*/
 void sig_usr_1_action(int signal) {
-    fprintf(stdout, "\n%s:%d-Client: [%d:%d]: child send finish signal!\n", __FILE__, __LINE__, id, getpid());
+    fprintf(stdout, "\n-Client: [%d:%d]: child send finish signal!\n", id, getpid());
 }
 
 /**
  * @Signal_handler
  * Child alarm timeout*/
 void sig_usr_2_action(int signal) {
-    fprintf(stderr, "\n%s:%d-Client: [%d:%d]: child send alarm timeout!\n", __FILE__, __LINE__, id, getpid());
+    fprintf(stdout, "\n-Client: [%d:%d]: child send alarm timeout!\n", id, getpid());
 }
 
 /**
@@ -229,8 +235,7 @@ void create(char *filename) {
  * */
 void destroy(char *filename) {
     char path[PATH_MAX + 1], *f = NULL, *folder = NULL, *f_suffix = NULL;
-    int status = 0;
-    __pid_t d_pid = 0;
+    int status = 0, retry = 2;
 
     /* Make a copy of filename.*/
     if (!(f = malloc(sizeof(char) * strlen(filename) + 1))) {
@@ -249,20 +254,13 @@ void destroy(char *filename) {
             fprintf(stderr, "\n%s:%d-sprintf error\n", __FILE__, __LINE__);
         }
 
-        d_pid = fork();
-        if (d_pid == 0) {
-            execlp("rm", "-r", "-f", path, NULL);
-            fprintf(stderr, "\n%s:%d-[%s] execlp error: '%s'\n", __FILE__, __LINE__, path, strerror(errno));
-        } else if (d_pid > 0) {
-            waitpid(d_pid, &status, 0);
-            if (WIFEXITED(status) && WEXITSTATUS(status) == 0) {
-                if (HT_Remove(clientsHT, f, f, false)) {
-                    printf("Dir '%s' removed successfully!\n", path);
-                }
+        while ((status = _rmdir(path)) && retry-- > 0);
+
+        if (status == EXIT_SUCCESS) {
+            printf("Dir '%s' removed successfully!\n", path);
+            if (!HT_Remove(clientsHT, f, f, false)) {
+                fprintf(stderr, "\n%s:%d-HT_Remove error\n", __FILE__, __LINE__);
             }
-        } else {
-            fprintf(stderr, "\n%s:%d-fork error: '%s'\n", __FILE__, __LINE__, strerror(errno));
-            exit(EXIT_FAILURE);
         }
     }
 }
@@ -270,7 +268,7 @@ void destroy(char *filename) {
 int main(int argc, char *argv[]) {
     char event_buffer[EVENT_BUF_LEN], id_file[PATH_MAX + 1];
     static struct sigaction quit_action, child_alarm, child_finish;
-    int fd_inotify = 0, ev, wd, status = 0;
+    int fd_inotify = 0, ev, wd, status = 0, tries = 3;
     struct inotify_event *event = NULL;
     struct dirent *d = NULL;
     struct stat s = {0};
@@ -352,6 +350,7 @@ int main(int argc, char *argv[]) {
     sigfillset(&(quit_action.sa_mask));
     sigaction(SIGINT, &quit_action, NULL);
     sigaction(SIGQUIT, &quit_action, NULL);
+    sigaction(SIGHUP, &quit_action, NULL);
 
     /* Set custom signal handler for SIGUSR1 (Child alarm timeout) signal.*/
     child_finish.sa_handler = sig_usr_1_action;
@@ -421,6 +420,16 @@ int main(int argc, char *argv[]) {
 
     fprintf(logfile, "cl %d\n", id);
     fflush(logfile);
+
+    if (unlink(id_file) < 0) {
+        fprintf(stderr, "\n%s:%d-[%s] unlink error: '%s'\n", __FILE__, __LINE__, id_file, strerror(errno));
+    }
+
+    while ((status = _rmdir(mirror_dir)) && tries-- > 0);
+
+    if (status == EXIT_FAILURE) {
+        fprintf(stderr, "\n%s:%d- _rmdir error'\n", __FILE__, __LINE__);
+    }
 
     fclose(logfile);
 
