@@ -28,9 +28,10 @@ typedef void *pointer;
 Hashtable clientsHT = NULL;
 char *common_dir = NULL, *input_dir = NULL, *mirror_dir = NULL, *log_file = NULL;
 unsigned long int buffer_size = 0;
-int id = 0, fd_log_file = 0;
+int id = 0;
 __pid_t sender_pid = 0, receiver_pid = 0;
 bool quit = false;
+FILE *logfile = NULL;
 
 /**
  * Calculate number of digits of specific int.*/
@@ -269,7 +270,7 @@ void destroy(char *filename) {
 int main(int argc, char *argv[]) {
     char event_buffer[EVENT_BUF_LEN], id_file[PATH_MAX + 1];
     static struct sigaction quit_action, child_alarm, child_finish;
-    int fd_inotify = 0, ev, wd, status = 0;;
+    int fd_inotify = 0, ev, wd, status = 0;
     struct inotify_event *event = NULL;
     struct dirent *d = NULL;
     struct stat s = {0};
@@ -277,7 +278,6 @@ int main(int argc, char *argv[]) {
     ssize_t bytes = 0;
     DIR *dir = NULL;
     __pid_t wpid = 0;
-    FILE *logfile = NULL;
 
     printf("pid: %d\n", getpid());
 
@@ -340,6 +340,7 @@ int main(int argc, char *argv[]) {
     }
 
     fprintf(logfile, "cl %d\n", id);
+    fflush(logfile);
 
     /* Initialize inotify.*/
     if ((fd_inotify = inotify_init()) < 0) {
@@ -419,6 +420,7 @@ int main(int argc, char *argv[]) {
     while ((wpid = wait(&status)) > 0);
 
     fprintf(logfile, "cl %d\n", id);
+    fflush(logfile);
 
     fclose(logfile);
 

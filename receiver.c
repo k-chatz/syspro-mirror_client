@@ -28,9 +28,9 @@ void _r_alarm_action(int signo) {
 /**
  * Receiver child*/
 void receiver(int sid) {
-    unsigned short int fileNameLength = 0;
+    __uint16_t fileNameLength = 0;
+    __uint32_t fileSize = 0;
     static struct sigaction act;
-    unsigned int fileSize = 0;
     unsigned long int offset = 0;
     struct stat s = {0};
     char buffer[buffer_size], ch, fileName[PATH_MAX + 1], *pch = NULL, path[PATH_MAX + 1];
@@ -74,7 +74,7 @@ void receiver(int sid) {
     while (1) {
 
         alarm(TIMEOUT);
-        if ((bytes = read(r_fd_fifo, &fileNameLength, sizeof(unsigned short int))) < 0) {
+        if ((bytes = read(r_fd_fifo, &fileNameLength, sizeof(__uint16_t))) < 0) {
             fprintf(stderr, "\n%s:%d-[%d] read error: '%s'\n", __FILE__, __LINE__, fileNameLength, strerror(errno));
             exit(EXIT_FAILURE);
         }
@@ -122,7 +122,7 @@ void receiver(int sid) {
         if (fileName[fileNameLength - 1] != '/') {
 
             alarm(TIMEOUT);
-            if ((bytes = read(r_fd_fifo, &fileSize, sizeof(unsigned int))) < 0) {
+            if ((bytes = read(r_fd_fifo, &fileSize, sizeof(__uint32_t))) < 0) {
                 fprintf(stderr, "\n%s:%d-file size read error: '%s'\n", __FILE__, __LINE__, strerror(errno));
                 exit(EXIT_FAILURE);
             }
@@ -174,4 +174,7 @@ void receiver(int sid) {
     fprintf(stdout, "\nC%d:%d-R[%d:%d]:-FINISH - Receive %lu files (Total bytes: %lu)\n", id, getppid(), sid,
             getpid(), r_files, r_bytes);
 
+    fprintf(logfile, "br %lu\n", r_bytes);
+    fprintf(logfile, "fr %lu\n", r_files);
+    fflush(logfile);
 }

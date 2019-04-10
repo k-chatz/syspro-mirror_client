@@ -22,7 +22,7 @@ void _s_alarm_action(int signo) {
 void rec_cp(int fd_fifo, const char *_p, unsigned long *s_bytes, unsigned long *s_files) {
     char buffer[buffer_size], dirName[PATH_MAX + 1], *fileName = NULL, path[PATH_MAX + 1];
     int fileNameLength = 0, fd_file = 0;
-    unsigned int fileSize = 0;
+    __uint32_t fileSize = 0;
     ssize_t bytes = 0, n = 0;
     struct dirent *d = NULL;
     struct stat s = {0};
@@ -50,10 +50,10 @@ void rec_cp(int fd_fifo, const char *_p, unsigned long *s_bytes, unsigned long *
 
                 if (S_ISDIR(s.st_mode)) {
 
-                    fileNameLength = (unsigned short int) strlen(fileName) + 1;
+                    fileNameLength = (__uint16_t) strlen(fileName) + 1;
 
                     alarm(TIMEOUT);
-                    if ((bytes = write(fd_fifo, &fileNameLength, sizeof(unsigned short int))) < 0) {
+                    if ((bytes = write(fd_fifo, &fileNameLength, sizeof(__uint16_t))) < 0) {
                         fprintf(stderr, "\n%s:%d-fifo write error: '%s'\n", __FILE__, __LINE__, strerror(errno));
                     }
                     alarm(0);
@@ -74,10 +74,10 @@ void rec_cp(int fd_fifo, const char *_p, unsigned long *s_bytes, unsigned long *
                     rec_cp(fd_fifo, path, s_bytes, s_files);
                 } else if (S_ISREG(s.st_mode)) {
 
-                    fileNameLength = (unsigned short int) strlen(fileName);
+                    fileNameLength = (__uint16_t) strlen(fileName);
 
                     alarm(TIMEOUT);
-                    if ((bytes = write(fd_fifo, &fileNameLength, sizeof(unsigned short int))) < 0) {
+                    if ((bytes = write(fd_fifo, &fileNameLength, sizeof(__uint16_t))) < 0) {
                         fprintf(stderr, "\n%s:%d-fifo write error: '%s'\n", __FILE__, __LINE__, strerror(errno));
                     }
                     alarm(0);
@@ -99,7 +99,7 @@ void rec_cp(int fd_fifo, const char *_p, unsigned long *s_bytes, unsigned long *
                     }
 
                     alarm(TIMEOUT);
-                    if ((bytes = write(fd_fifo, &fileSize, sizeof(unsigned int))) < 0) {
+                    if ((bytes = write(fd_fifo, &fileSize, sizeof(__uint32_t))) < 0) {
                         fprintf(stderr, "\n%s:%d-fifo write error: '%s'\n", __FILE__, __LINE__, strerror(errno));
                     }
                     alarm(0);
@@ -134,13 +134,12 @@ void rec_cp(int fd_fifo, const char *_p, unsigned long *s_bytes, unsigned long *
 /**
  * Sender child*/
 void sender(int rid) {
-    unsigned short int fileNameLength = 0;
+    __uint16_t fileNameLength = 0;
     unsigned long int s_files = 0, s_bytes = 0;
     static struct sigaction act;
     char s_fifo[PATH_MAX + 1];
     int fd_fifo = 0, f = 0;
     ssize_t bytes = 0;
-
 
     fprintf(stdout, "C[%d:%d]-S[%d:%d]\n", id, getppid(), rid, getpid());
 
@@ -180,7 +179,7 @@ void sender(int rid) {
 
     alarm(TIMEOUT);
 
-    if ((bytes = write(fd_fifo, &fileNameLength, sizeof(unsigned short int))) < 0) {
+    if ((bytes = write(fd_fifo, &fileNameLength, sizeof(__uint16_t))) < 0) {
         fprintf(stderr, "\n%s:%d-fifo write error: '%s'\n", __FILE__, __LINE__, strerror(errno));
         exit(2);
     }
@@ -201,4 +200,8 @@ void sender(int rid) {
     fprintf(stdout, "\nC%d:%d-S[%d:%d]:-FINISH - Send %lu files (Total bytes %lu)\n", id, getppid(), rid, getpid(),
             s_files,
             s_bytes);
+
+    fprintf(logfile, "bs %lu\n", s_bytes);
+    fprintf(logfile, "fs %lu\n", s_files);
+    fflush(logfile);
 }

@@ -2,11 +2,11 @@ OBJS	= main.o hash.o sender.o receiver.o
 SOURCE	= main.c hash.c sender.c receiver.c
 HEADER	=
 OUT	= mirror_client
-CC	 = gcc
-FLAGS	 = -c -Wall
+CC = gcc
+FLAGS = -c -Wall
 
 all: $(OBJS)
-	$(CC) $(OBJS) -o $(OUT)
+	$(CC) $(OBJS) -o $(OUT) -lm
 
 main.o: main.c
 	$(CC) $(FLAGS) main.c
