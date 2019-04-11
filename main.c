@@ -131,8 +131,22 @@ void readOptions(
  * @Signal_handler
  * Interupt or quit action*/
 void sig_int_quit_action(int signal) {
-    fprintf(stdout, "C[%d:%d]: SIGNAL(%d) exiting...\n", id, getpid(), signal);
+    fprintf(stdout, "C[%d:%d]: SIGNAL(%d) EXITING...\n", id, getpid(), signal);
     quit = true;
+}
+
+/**
+ * @Signal_handler
+ * SIGCHLD action*/
+void sig_chld_action(int signal, siginfo_t *info, void *context) {
+    int status = 0;
+    pid_t child_pid = info->si_pid;
+    //fprintf(stdout, "C[%d:%d] SIGNAL(%d) CHILD[%d] TERMINATED!\n", id, getpid(), signal, child_pid);
+    pid_t cpid = waitpid(child_pid, &status, 0);
+    if (WIFEXITED(child_pid)) {
+/*        fprintf(stdout, "C[%d:%d] SIGNAL(%d) CHILD[%d] TERMINATED WITH STATUS %d\n", id, getpid(), signal, cpid,
+                WEXITSTATUS(status));*/
+    }
 }
 
 /**
@@ -142,6 +156,11 @@ void sig_usr_1_action(int signal, siginfo_t *info, void *context) {
     int target_client = info->si_value.sival_int;
     pid_t child_pid = info->si_pid;
     Client client = NULL;
+
+    //write(fd, &signal, sizeof(int));
+    //write(fd, &info, sizeof(siginfo_t *));
+    //write(fd, context, sizeof(void *));
+
     if ((client = HT_Get(clientsHT, &target_client)) != NULL) {
         if (client->sender == child_pid) {
             fprintf(stdout, "C[%d:%d] SIGNAL(%d) SENDER[%d:%d] COMPLETE HIS JOB!\n", id, getpid(), signal,
@@ -302,11 +321,10 @@ void create(char *filename) {
 void destroy(char *filename) {
     char path[PATH_MAX + 1], *suffix = NULL, *prefix = NULL, *folder = NULL;
     int client_id = 0, status = 0, retries = 2;;
-    Client client = NULL;
     prefix = strtok(filename, ".");
     client_id = (int) strtol(prefix, NULL, 10);
     if (client_id > 0 && client_id != id) {
-        if (HT_Remove(clientsHT, &client_id, &client_id, false)) {
+        if (HT_Remove(clientsHT, &client_id, &client_id, true)) {
             folder = malloc(sizeof(char) * strlen(prefix) + 1);
             strcpy(folder, prefix);
             suffix = strtok(NULL, "\0");
@@ -331,8 +349,8 @@ void destroy(char *filename) {
 
 int main(int argc, char *argv[]) {
     char event_buffer[EVENT_BUF_LEN], id_file[PATH_MAX + 1];
-    static struct sigaction quit_action, child_error, child_finish;
-    int fd_inotify = 0, ev, wd, status = 0, tries = 2;
+    static struct sigaction quit_action, child_error, child_finish, child_exit;
+    int fd_i_notify = 0, ev, wd, status = 0, tries = 2;
     struct inotify_event *event = NULL;
     struct dirent *d = NULL;
     struct stat s = {0};
@@ -405,7 +423,7 @@ int main(int argc, char *argv[]) {
     fflush(logfile);
 
     /* Initialize inotify.*/
-    if ((fd_inotify = inotify_init()) < 0) {
+    if ((fd_i_notify = inotify_init()) < 0) {
         fprintf(stderr, "\n%s:%d-i-notify_init error: '%s'\n", __FILE__, __LINE__, strerror(errno));
     }
 
@@ -417,20 +435,28 @@ int main(int argc, char *argv[]) {
     sigaction(SIGQUIT, &quit_action, NULL);
     sigaction(SIGHUP, &quit_action, NULL);
 
-    /* Set custom signal handler for SIGUSR1 (Child alarm timeout) signal.*/
+
+    /* Set custom signal handler for SIGCHLD signal.*/
+    child_exit.sa_handler = (__sighandler_t) sig_chld_action;
+    child_exit.sa_flags = SA_RESTART | SA_SIGINFO;
+    sigfillset(&(child_exit.sa_mask));
+    sigaction(SIGCHLD, &child_exit, NULL);
+
+
+    /* Set custom signal handler for SIGUSR1 (Child finish normally) signal.*/
     child_finish.sa_handler = (__sighandler_t) sig_usr_1_action;
     child_finish.sa_flags = SA_RESTART | SA_SIGINFO;
     sigfillset(&(child_finish.sa_mask));
     sigaction(SIGUSR1, &child_finish, NULL);
 
-    /* Set custom signal handler for SIGUSR2 (Child alarm timeout) signal.*/
+    /* Set custom signal handler for SIGUSR2 (Child error or alarm timeout) signal.*/
     child_error.sa_handler = (__sighandler_t) sig_usr_2_action;
     child_error.sa_flags = SA_RESTART | SA_SIGINFO;
     sigfillset(&(child_error.sa_mask));
     sigaction(SIGUSR2, &child_error, NULL);
 
     /* Add common_dir at watch list to detect changes.*/
-    wd = inotify_add_watch(fd_inotify, common_dir, IN_CREATE | IN_DELETE);
+    wd = inotify_add_watch(fd_i_notify, common_dir, IN_CREATE | IN_DELETE);
 
     /* Initialize clients hashtable*/
     HT_Init(
@@ -456,7 +482,7 @@ int main(int argc, char *argv[]) {
 
     /* Read i-notify events*/
     while (!quit) {
-        if ((bytes = read(fd_inotify, event_buffer, EVENT_BUF_LEN)) < 0) {
+        if ((bytes = read(fd_i_notify, event_buffer, EVENT_BUF_LEN)) < 0) {
             fprintf(stderr, "\n%s:%d-i-notify event read error: '%s'\n", __FILE__, __LINE__, strerror(errno));
         }
         ev = 0;
@@ -478,10 +504,10 @@ int main(int argc, char *argv[]) {
     }
 
     /* Remove common_dir from watch list.*/
-    inotify_rm_watch(fd_inotify, wd);
+    inotify_rm_watch(fd_i_notify, wd);
 
     /* Close the i-notify instance.*/
-    close(fd_inotify);
+    close(fd_i_notify);
 
     /* Wait all childs*/
     while ((wpid = wait(&status)) > 0);
