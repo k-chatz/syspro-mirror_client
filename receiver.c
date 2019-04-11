@@ -8,7 +8,7 @@
 #include <signal.h>
 #include "receiver.h"
 
-#define TIMEOUT 30
+#define TIMEOUT 5
 
 unsigned long int r_files = 0, r_bytes = 0;
 int r_fd_fifo = 0, r_fd_file = 0, r_fifo_status = 0, s_id = 0;
@@ -17,8 +17,6 @@ char r_fifo[PATH_MAX + 1];
 void r_term() {
     /* Send a signal to the parent process to inform that child got an error.*/
     union sigval sigval = {.sival_int = s_id};
-    sigqueue(getppid(), SIGUSR2, sigval);
-
     /* Close fifo if is open.*/
     if (r_fd_fifo > 0) {
         close(r_fd_fifo);
@@ -34,11 +32,15 @@ void r_term() {
         close(r_fd_file);
     }
 
+    if ((sigqueue(getppid(), SIGUSR2, sigval)) < 0) {
+        fprintf(stderr, "\n%s:%d-sigqueue error\n", __FILE__, __LINE__);
+    }
+
     exit(EXIT_FAILURE);
 }
 
-void _r_alarm_action(int signo) {
-    fprintf(stderr, "\nClient: [%d:%d], %d: alarm timeout!\n", id, getppid(), getpid());
+void _r_alarm_action(int signal) {
+    fprintf(stderr, "\nC[%d:%d] SIGNAL(%d) RECEIVER[%d:%d] Alarm timeout!\n", id, getppid(), signal, s_id, getpid());
     r_term();
 }
 
@@ -56,7 +58,7 @@ void receiver(int sender_id) {
     __uint32_t fileSize = 0;
     ssize_t bytes = 0;
 
-    fprintf(stdout, "C[%d:%d]-RECEIVER[%d:%d]\n", id, getppid(), s_id, getpid());
+    fprintf(stdout, "C[%d:%d] RECEIVER[%d:%d] STARTUP\n", id, getppid(), s_id, getpid());
 
     r_fd_fifo = 0;
     r_fd_file = 0;
@@ -66,9 +68,8 @@ void receiver(int sender_id) {
 
     /* set up the signal handler*/
     act.sa_handler = _r_alarm_action;
-
+    act.sa_flags = SA_RESTART;
     sigfillset(&(act.sa_mask));
-
     sigaction(SIGALRM, &act, NULL);
 
     /* Construct fifo filename*/
@@ -187,10 +188,12 @@ void receiver(int sender_id) {
     }
 
     /* Send a signal to the parent process to inform that everything went well!*/
-    sigqueue(getppid(), SIGUSR1, sigval);
+    if ((sigqueue(getppid(), SIGUSR1, sigval)) < 0) {
+        fprintf(stderr, "\n%s:%d-sigqueue error\n", __FILE__, __LINE__);
+    }
 
-    fprintf(stdout, "\nC%d:%d-RECEIVER[%d:%d]:-FINISH - Receive %lu files (Total bytes: %lu)\n", id, getppid(), s_id,
-            getpid(), r_files, r_bytes);
+/*    fprintf(stdout, "\nC%d:%d-RECEIVER[%d:%d]:-FINISH - Receive %lu files (Total bytes: %lu)\n",
+            id, getppid(), s_id, getpid(), r_files, r_bytes);*/
 
     fprintf(logfile, "br %lu\n", r_bytes);
     fflush(logfile);

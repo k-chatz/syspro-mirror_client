@@ -131,25 +131,27 @@ void readOptions(
  * @Signal_handler
  * Interupt or quit action*/
 void sig_int_quit_action(int signal) {
-    fprintf(stdout, "\n-Client: [%d:%d]: signal: %d - exiting...\n", id, getpid(), signal);
+    fprintf(stdout, "C[%d:%d]: SIGNAL(%d) exiting...\n", id, getpid(), signal);
     quit = true;
 }
 
 /**
  * @Signal_handler
  * Child finish*/
-void sig_usr_1_action(int sig_no, siginfo_t *info, void *context) {
+void sig_usr_1_action(int signal, siginfo_t *info, void *context) {
     int target_client = info->si_value.sival_int;
     pid_t child_pid = info->si_pid;
     Client client = NULL;
     if ((client = HT_Get(clientsHT, &target_client)) != NULL) {
         if (client->sender == child_pid) {
-            fprintf(stdout, "\n-C[%d:%d]-SENDER[%d:%d] Complete his job!\n", id, getpid(), target_client, child_pid);
+            fprintf(stdout, "C[%d:%d] SIGNAL(%d) SENDER[%d:%d] COMPLETE HIS JOB!\n", id, getpid(), signal,
+                    target_client, child_pid);
         } else if (client->receiver == child_pid) {
-            fprintf(stdout, "\n-C[%d:%d]-RECEIVER[%d:%d] Complete his job!\n", id, getpid(), target_client, child_pid);
+            fprintf(stdout, "C[%d:%d] SIGNAL(%d) RECEIVER[%d:%d] COMPLETE HIS JOB!\n", id, getpid(), signal,
+                    target_client, child_pid);
         } else {
-            fprintf(stdout, "\n-C[%d:%d]-I don't recognize you %d:%d, tinos eisai esy ??\n",
-                    id, getpid(), child_pid, target_client);
+            fprintf(stderr, "C[%d:%d] SIGNAL(%d) I don't recognize you %d:%d, tinos eisai esy ??\n",
+                    id, getpid(), signal, child_pid, target_client);
         }
     }
 }
@@ -157,15 +159,15 @@ void sig_usr_1_action(int sig_no, siginfo_t *info, void *context) {
 /**
  * @Signal_handler
  * Child alarm timeout*/
-void sig_usr_2_action(int sig_no, siginfo_t *info, void *context) {
+void sig_usr_2_action(int signal, siginfo_t *info, void *context) {
     int target_client = info->si_value.sival_int;
     pid_t child_pid = info->si_pid;
     Client client = NULL;
 
     if ((client = HT_Get(clientsHT, &target_client)) != NULL) {
         if (client->sender == child_pid) {
-            fprintf(stderr, "\n-C[%d:%d]-SENDER[%d:%d] FAIL!, %d remaining attempts...\n",
-                    id, getpid(), target_client, child_pid, client->sender_tries);
+            fprintf(stderr, "C[%d:%d] SIGNAL(%d) SENDER[%d:%d] FAIL!, %d remaining attempts...\n",
+                    id, getpid(), signal, target_client, child_pid, client->sender_tries);
             if (client->sender_tries-- > 0) {
                 client->sender = fork();
                 if (client->sender < 0) {
@@ -178,13 +180,13 @@ void sig_usr_2_action(int sig_no, siginfo_t *info, void *context) {
                 }
             }
         } else if (client->receiver == child_pid) {
-            fprintf(stderr, "\n-C[%d:%d]-RECEIVER[%d:%d] FAIL!, %d remaining attempts...\n",
-                    id, getpid(), target_client, child_pid, client->receiver_tries);
+            fprintf(stderr, "C[%d:%d] SIGNAL(%d) RECEIVER[%d:%d] FAIL!, %d remaining attempts...\n",
+                    id, getpid(), signal, target_client, child_pid, client->receiver_tries);
 
             if (client->receiver_tries-- > 0) {
                 client->receiver = fork();
                 if (client->receiver < 0) {
-                    fprintf(stderr, "\n%s:%d-Receiver fork error: '%s'\n", __FILE__, __LINE__, strerror(errno));
+                    fprintf(stderr, "\n%s:%d Receiver fork error: '%s'\n", __FILE__, __LINE__, strerror(errno));
                     exit(EXIT_FAILURE);
                 }
                 if (client->receiver == 0) {
@@ -193,8 +195,8 @@ void sig_usr_2_action(int sig_no, siginfo_t *info, void *context) {
                 }
             }
         } else {
-            fprintf(stderr, "\n-C[%d:%d]-I don't recognize you %d:%d, tinos eisai esy ??\n",
-                    id, getpid(), child_pid, target_client);
+            fprintf(stderr, "C[%d:%d] SIGNAL(%d) I don't recognize you %d:%d, tinos eisai esy ??\n",
+                    id, getpid(), signal, child_pid, target_client);
         }
     }
 }
@@ -339,8 +341,6 @@ int main(int argc, char *argv[]) {
     DIR *dir = NULL;
     __pid_t wpid = 0;
 
-    printf("pid: %d\n", getpid());
-
     /* Read argument options from command line*/
     readOptions(argc, argv, &id, &common_dir, &input_dir, &mirror_dir, &buffer_size, &log_file);
 
@@ -350,6 +350,8 @@ int main(int argc, char *argv[]) {
     assert(mirror_dir != NULL);
     assert(buffer_size > 0);
     assert(log_file != NULL);
+
+    printf("C[%d:%d] STARTUP\n", id, getpid());
 
     /* Check if input_dir directory exists.*/
     if (!stat(input_dir, &s)) {
@@ -410,6 +412,7 @@ int main(int argc, char *argv[]) {
     /* Set custom signal handler for SIGINT (^c) & SIGQUIT (^\) signals.*/
     quit_action.sa_handler = sig_int_quit_action;
     sigfillset(&(quit_action.sa_mask));
+    child_finish.sa_flags = SA_RESTART;
     sigaction(SIGINT, &quit_action, NULL);
     sigaction(SIGQUIT, &quit_action, NULL);
     sigaction(SIGHUP, &quit_action, NULL);
@@ -453,7 +456,7 @@ int main(int argc, char *argv[]) {
 
     /* Read i-notify events*/
     while (!quit) {
-       if ((bytes = read(fd_inotify, event_buffer, EVENT_BUF_LEN)) < 0) {
+        if ((bytes = read(fd_inotify, event_buffer, EVENT_BUF_LEN)) < 0) {
             fprintf(stderr, "\n%s:%d-i-notify event read error: '%s'\n", __FILE__, __LINE__, strerror(errno));
         }
         ev = 0;

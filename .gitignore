@@ -87,3 +87,4 @@ fabric.properties
 # End of https://www.gitignore.io/api/clion
 
 /resources/cmd.txt
+/resources/.~lock.documentation.odt#

@@ -9,7 +9,7 @@
 #include <stdio.h>
 #include "sender.h"
 
-#define TIMEOUT 30
+#define TIMEOUT 5
 
 unsigned long int s_files = 0, s_bytes = 0;
 int s_fd_fifo = 0, s_fd_file = 0, s_fifo_status = 0, r_id = 0;
@@ -18,8 +18,6 @@ char s_fifo[PATH_MAX + 1];
 void s_term() {
     /* Send a signal to the parent process to inform that child got an error.*/
     union sigval sigval = {.sival_int = r_id};
-    sigqueue(getppid(), SIGUSR2, sigval);
-
     /* Close fifo if is open.*/
     if (s_fd_fifo > 0) {
         close(s_fd_fifo);
@@ -35,11 +33,15 @@ void s_term() {
         close(s_fd_file);
     }
 
+    if ((sigqueue(getppid(), SIGUSR2, sigval)) < 0) {
+        fprintf(stderr, "\n%s:%d-sigqueue error\n", __FILE__, __LINE__);
+    }
+
     exit(EXIT_FAILURE);
 }
 
-void _s_alarm_action(int signo) {
-    fprintf(stderr, "\nClient: [%d:%d], %d: alarm timeout!\n", id, getppid(), getpid());
+void _s_alarm_action(int signal) {
+    fprintf(stderr, "\nC[%d:%d] SIGNAL(%d) SENDER[%d:%d] Alarm timeout!\n", id, getppid(), signal, r_id, getpid());
     s_term();
 }
 
@@ -180,13 +182,12 @@ void sender(int receiver_id) {
     s_fifo_status = 0;
     ssize_t bytes = 0;
 
-    fprintf(stdout, "C[%d:%d]-SENDER[%d:%d]\n", id, getppid(), r_id, getpid());
+    fprintf(stdout, "C[%d:%d] SENDER[%d:%d] STARTUP\n", id, getppid(), r_id, getpid());
 
     /* set up the signal handler*/
     act.sa_handler = _s_alarm_action;
-
+    act.sa_flags = SA_RESTART;
     sigfillset(&(act.sa_mask));
-
     sigaction(SIGALRM, &act, NULL);
 
     /* Construct fifo filename*/
@@ -231,11 +232,12 @@ void sender(int receiver_id) {
     }
 
     /* Send a signal to the parent process to inform that everything went well!*/
-    sigqueue(getppid(), SIGUSR1, sigval);
+    if ((sigqueue(getppid(), SIGUSR1, sigval)) < 0) {
+        fprintf(stderr, "\n%s:%d-sigqueue error\n", __FILE__, __LINE__);
+    }
 
-    fprintf(stdout, "\nC%d:%d-SENDER[%d:%d]:-FINISH - Send %lu files (Total bytes %lu)\n", id, getppid(), r_id, getpid(),
-            s_files,
-            s_bytes);
+/*    fprintf(stdout, "\nC%d:%d-SENDER[%d:%d]:-FINISH - Send %lu files (Total bytes %lu)\n",
+            id, getppid(), r_id, getpid(), s_files, s_bytes);*/
 
     fprintf(logfile, "bs %lu\n", s_bytes);
     fflush(logfile);
