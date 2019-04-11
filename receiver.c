@@ -11,12 +11,13 @@
 #define TIMEOUT 30
 
 unsigned long int r_files = 0, r_bytes = 0;
-int r_fd_fifo = 0, r_fd_file = 0, r_fifo_status = 0;
+int r_fd_fifo = 0, r_fd_file = 0, r_fifo_status = 0, s_id = 0;
 char r_fifo[PATH_MAX + 1];
 
 void r_term() {
-    /* Inform parent.*/
-    kill(getppid(), SIGUSR2);
+    /* Send a signal to the parent process to inform that child got an error.*/
+    union sigval sigval = {.sival_int = s_id};
+    sigqueue(getppid(), SIGUSR2, sigval);
 
     /* Close fifo if is open.*/
     if (r_fd_fifo > 0) {
@@ -43,17 +44,19 @@ void _r_alarm_action(int signo) {
 
 /**
  * Receiver child*/
-void receiver(int sid) {
-    char buffer[buffer_size], ch, fileName[PATH_MAX + 1], *pch = NULL, path[PATH_MAX + 1];
+void receiver(int sender_id) {
+    char path[PATH_MAX + 1], fileName[PATH_MAX + 1], buffer[buffer_size], ch, *pch = NULL;
     unsigned long int offset = 0;
     static struct sigaction act;
     struct stat s = {0};
     int b = 0;
+    union sigval sigval = {.sival_int = sender_id};
+    s_id = sender_id;
     __uint16_t fileNameLength = 0;
     __uint32_t fileSize = 0;
     ssize_t bytes = 0;
 
-    fprintf(stdout, "C[%d:%d]-R[%d:%d]\n", id, getppid(), sid, getpid());
+    fprintf(stdout, "C[%d:%d]-RECEIVER[%d:%d]\n", id, getppid(), s_id, getpid());
 
     r_fd_fifo = 0;
     r_fd_file = 0;
@@ -69,7 +72,7 @@ void receiver(int sid) {
     sigaction(SIGALRM, &act, NULL);
 
     /* Construct fifo filename*/
-    if (sprintf(r_fifo, "%s/id%d_to_id%d.fifo", common_dir, sid, id) < 0) {
+    if (sprintf(r_fifo, "%s/id%d_to_id%d.fifo", common_dir, s_id, id) < 0) {
         fprintf(stderr, "\n%s:%d-sprintf error\n", __FILE__, __LINE__);
         r_term();
     }
@@ -115,7 +118,7 @@ void receiver(int sid) {
             fileName[fileNameLength] = '\0';
         }
 
-        if (sprintf(path, "%s/%d/%s", mirror_dir, sid, fileName) < 0) {
+        if (sprintf(path, "%s/%d/%s", mirror_dir, s_id, fileName) < 0) {
             fprintf(stderr, "\n%s:%d-sprintf error\n", __FILE__, __LINE__);
             r_term();
         }
@@ -149,7 +152,7 @@ void receiver(int sid) {
             b = fileSize;
 
             if ((r_fd_file = open(path, O_CREAT | O_WRONLY | O_TRUNC, S_IRUSR | S_IWUSR | S_IXUSR)) < 0) {
-                fprintf(stderr, "\n%s:%d-[%s] open error: '%s'\n", __FILE__, __LINE__, path, strerror(errno));
+                fprintf(stderr, "\n%s:%d-file '%s' open error: '%s'\n", __FILE__, __LINE__, path, strerror(errno));
                 r_term();
             }
 
@@ -184,9 +187,9 @@ void receiver(int sid) {
     }
 
     /* Send a signal to the parent process to inform that everything went well!*/
-    kill(getppid(), SIGUSR1);
+    sigqueue(getppid(), SIGUSR1, sigval);
 
-    fprintf(stdout, "\nC%d:%d-R[%d:%d]:-FINISH - Receive %lu files (Total bytes: %lu)\n", id, getppid(), sid,
+    fprintf(stdout, "\nC%d:%d-RECEIVER[%d:%d]:-FINISH - Receive %lu files (Total bytes: %lu)\n", id, getppid(), s_id,
             getpid(), r_files, r_bytes);
 
     fprintf(logfile, "br %lu\n", r_bytes);

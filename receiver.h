@@ -8,6 +8,6 @@ FILE *logfile;
 
 extern unsigned int digits(int n);
 
-void receiver(int sid);
+void receiver(int sender_id);
 
 #endif

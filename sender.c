@@ -12,12 +12,13 @@
 #define TIMEOUT 30
 
 unsigned long int s_files = 0, s_bytes = 0;
-int s_fd_fifo = 0, s_fd_file = 0, s_fifo_status = 0;
+int s_fd_fifo = 0, s_fd_file = 0, s_fifo_status = 0, r_id = 0;
 char s_fifo[PATH_MAX + 1];
 
 void s_term() {
-    /* Inform parent.*/
-    kill(getppid(), SIGUSR2);
+    /* Send a signal to the parent process to inform that child got an error.*/
+    union sigval sigval = {.sival_int = r_id};
+    sigqueue(getppid(), SIGUSR2, sigval);
 
     /* Close fifo if is open.*/
     if (s_fd_fifo > 0) {
@@ -166,20 +167,20 @@ void rec_cp(const char *_p) {
 
 /**
  * Sender child*/
-void sender(int rid) {
+void sender(int receiver_id) {
     __uint16_t fileNameLength = 0;
-
     static struct sigaction act;
+    union sigval sigval = {.sival_int = receiver_id};
 
+    r_id = receiver_id;
     s_fd_fifo = 0;
     s_fd_file = 0;
     s_files = 0;
     s_bytes = 0;
     s_fifo_status = 0;
-
     ssize_t bytes = 0;
 
-    fprintf(stdout, "C[%d:%d]-S[%d:%d]\n", id, getppid(), rid, getpid());
+    fprintf(stdout, "C[%d:%d]-SENDER[%d:%d]\n", id, getppid(), r_id, getpid());
 
     /* set up the signal handler*/
     act.sa_handler = _s_alarm_action;
@@ -189,7 +190,7 @@ void sender(int rid) {
     sigaction(SIGALRM, &act, NULL);
 
     /* Construct fifo filename*/
-    if (sprintf(s_fifo, "%s/id%d_to_id%d.fifo", common_dir, id, rid) < 0) {
+    if (sprintf(s_fifo, "%s/id%d_to_id%d.fifo", common_dir, id, r_id) < 0) {
         fprintf(stderr, "\n%s:%d-sprintf error\n", __FILE__, __LINE__);
         s_term();
     }
@@ -229,10 +230,10 @@ void sender(int rid) {
         unlink(s_fifo);
     }
 
-    /* Inform parent.*/
-    kill(getppid(), SIGUSR1);
+    /* Send a signal to the parent process to inform that everything went well!*/
+    sigqueue(getppid(), SIGUSR1, sigval);
 
-    fprintf(stdout, "\nC%d:%d-S[%d:%d]:-FINISH - Send %lu files (Total bytes %lu)\n", id, getppid(), rid, getpid(),
+    fprintf(stdout, "\nC%d:%d-SENDER[%d:%d]:-FINISH - Send %lu files (Total bytes %lu)\n", id, getppid(), r_id, getpid(),
             s_files,
             s_bytes);
 

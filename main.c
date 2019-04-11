@@ -12,16 +12,16 @@
 #include <dirent.h>
 #include <stdbool.h>
 #include <fcntl.h>
+#include <math.h>
+#include <wait.h>
 #include "hash.h"
 #include "sender.h"
 #include "receiver.h"
-#include <math.h>
-#include <wait.h>
 
 #define EVENT_SIZE (sizeof(struct inotify_event))
 #define EVENT_BUF_LEN (1024 * (EVENT_SIZE + 16))
 
-#define TRIES 3
+#define TRIES 2
 
 typedef void *pointer;
 
@@ -29,9 +29,16 @@ Hashtable clientsHT = NULL;
 char *common_dir = NULL, *input_dir = NULL, *mirror_dir = NULL, *log_file = NULL;
 unsigned long int buffer_size = 0;
 int id = 0;
-__pid_t sender_pid = 0, receiver_pid = 0;
 bool quit = false;
 FILE *logfile = NULL;
+
+typedef struct Client {
+    int id;
+    pid_t sender;
+    pid_t receiver;
+    int sender_tries;
+    int receiver_tries;
+} *Client;
 
 /**
  * Calculate number of digits of specific int.*/
@@ -131,44 +138,99 @@ void sig_int_quit_action(int signal) {
 /**
  * @Signal_handler
  * Child finish*/
-void sig_usr_1_action(int signal) {
-    fprintf(stdout, "\n-Client: [%d:%d]: child send finish signal!\n", id, getpid());
+void sig_usr_1_action(int sig_no, siginfo_t *info, void *context) {
+    int target_client = info->si_value.sival_int;
+    pid_t child_pid = info->si_pid;
+    Client client = NULL;
+    if ((client = HT_Get(clientsHT, &target_client)) != NULL) {
+        if (client->sender == child_pid) {
+            fprintf(stdout, "\n-C[%d:%d]-SENDER[%d:%d] Complete his job!\n", id, getpid(), target_client, child_pid);
+        } else if (client->receiver == child_pid) {
+            fprintf(stdout, "\n-C[%d:%d]-RECEIVER[%d:%d] Complete his job!\n", id, getpid(), target_client, child_pid);
+        } else {
+            fprintf(stdout, "\n-C[%d:%d]-I don't recognize you %d:%d, tinos eisai esy ??\n",
+                    id, getpid(), child_pid, target_client);
+        }
+    }
 }
 
 /**
  * @Signal_handler
  * Child alarm timeout*/
-void sig_usr_2_action(int signal) {
-    fprintf(stdout, "\n-Client: [%d:%d]: child send alarm timeout!\n", id, getpid());
+void sig_usr_2_action(int sig_no, siginfo_t *info, void *context) {
+    int target_client = info->si_value.sival_int;
+    pid_t child_pid = info->si_pid;
+    Client client = NULL;
+
+    if ((client = HT_Get(clientsHT, &target_client)) != NULL) {
+        if (client->sender == child_pid) {
+            fprintf(stderr, "\n-C[%d:%d]-SENDER[%d:%d] FAIL!, %d remaining attempts...\n",
+                    id, getpid(), target_client, child_pid, client->sender_tries);
+            if (client->sender_tries-- > 0) {
+                client->sender = fork();
+                if (client->sender < 0) {
+                    fprintf(stderr, "\n%s:%d-Sender fork error: '%s'\n", __FILE__, __LINE__, strerror(errno));
+                    exit(EXIT_FAILURE);
+                }
+                if (client->sender == 0) {
+                    sender(target_client);
+                    exit(EXIT_SUCCESS);
+                }
+            }
+        } else if (client->receiver == child_pid) {
+            fprintf(stderr, "\n-C[%d:%d]-RECEIVER[%d:%d] FAIL!, %d remaining attempts...\n",
+                    id, getpid(), target_client, child_pid, client->receiver_tries);
+
+            if (client->receiver_tries-- > 0) {
+                client->receiver = fork();
+                if (client->receiver < 0) {
+                    fprintf(stderr, "\n%s:%d-Receiver fork error: '%s'\n", __FILE__, __LINE__, strerror(errno));
+                    exit(EXIT_FAILURE);
+                }
+                if (client->receiver == 0) {
+                    receiver(target_client);
+                    exit(EXIT_SUCCESS);
+                }
+            }
+        } else {
+            fprintf(stderr, "\n-C[%d:%d]-I don't recognize you %d:%d, tinos eisai esy ??\n",
+                    id, getpid(), child_pid, target_client);
+        }
+    }
 }
 
 /**
  * @Callback HT Create*/
-char *clientCreate(char *fn) {
-    return fn;
+Client clientCreate(const int *id) {
+    Client c = NULL;
+    c = (Client) malloc(sizeof(struct Client));
+    if (c != NULL) {
+        c->id = *id;
+        c->sender = 0;
+        c->receiver = 0;
+        c->sender_tries = TRIES;
+        c->receiver_tries = TRIES;
+    }
+    return c;
 }
 
 /**
  * @Callback HT Compare*/
-int clientCompare(char *fn1, char *fn2) {
-    return strcmp(fn1, fn2);
+int clientCompare(Client c1, Client c2) {
+    return c1->id != c2->id;
 }
 
 /**
  * @Callback HT Hash*/
-unsigned long int clientHash(char *key, unsigned long int capacity) {
-    int i, sum = 0;
-    size_t keyLength = strlen(key);
-    for (i = 0; i < keyLength; i++) {
-        sum += key[i];
-    }
-    return sum % capacity;
+unsigned long int clientHash(const int *id, unsigned long int capacity) {
+    return *id % capacity;
 }
 
 /**
  * @Callback HT Destroy*/
-void clientDestroy(char *fn) {
-    //free(fn);
+void clientDestroy(Client client) {
+    assert(client != NULL);
+    free(client);
 }
 
 /**
@@ -176,55 +238,57 @@ void clientDestroy(char *fn) {
  * */
 void create(char *filename) {
     struct stat s = {0};
-    char id_file[PATH_MAX + 1], f[strlen(filename) + 1], *fn = NULL, *f_suffix = NULL;
-    int client = 0;
+    char id_file[PATH_MAX + 1], fn[strlen(filename) + 1], *f_suffix = NULL;
+    int client_id = 0;
+    Client client = NULL;
+    strcpy(fn, filename);
 
-    strcpy(f, filename);
+    client_id = (int) strtol(strtok(filename, "."), NULL, 10);
 
-    client = (int) strtol(strtok(filename, "."), NULL, 10);
-
-    if (client > 0 && client != id) {
+    if (client_id > 0 && client_id != id) {
         f_suffix = strtok(NULL, "\0");
         if (f_suffix != NULL && !strcmp(f_suffix, "id")) {
-            if (HT_Insert(clientsHT, f, f, (void **) &fn)) {
 
-                /* Construct id file*/
-                if (sprintf(id_file, "%s/%s", common_dir, f) < 0) {
-                    fprintf(stderr, "\n%s:%d-sprintf error\n", __FILE__, __LINE__);
-                    exit(EXIT_FAILURE);
-                }
+            /* Construct id file*/
+            if (sprintf(id_file, "%s/%s", common_dir, fn) < 0) {
+                fprintf(stderr, "\n%s:%d-sprintf error\n", __FILE__, __LINE__);
+                exit(EXIT_FAILURE);
+            }
 
-                if (!stat(id_file, &s)) {
-                    if (!S_ISDIR(s.st_mode)) {
+            if (!stat(id_file, &s)) {
+                if (!S_ISDIR(s.st_mode)) {
+
+                    /* Insert detected client into HT in order to remember that it has been processed.*/
+                    if (HT_Insert(clientsHT, &client_id, &client_id, (void **) &client)) {
+
                         /* Create sender.*/
-                        sender_pid = fork();
-                        if (sender_pid < 0) {
+                        client->sender = fork();
+                        if (client->sender == 0) {
+                            sender(client_id);
+                            exit(EXIT_SUCCESS);
+                        } else if (client->sender < 0) {
                             fprintf(stderr, "\n%s:%d-Sender fork error: '%s'\n", __FILE__, __LINE__, strerror(errno));
                             exit(EXIT_FAILURE);
                         }
-                        if (sender_pid == 0) {
-                            sender(client);
-                            exit(EXIT_SUCCESS);
-                        }
 
                         /* Create receiver.*/
-                        receiver_pid = fork();
-                        if (receiver_pid < 0) {
+                        client->receiver = fork();
+                        if (client->receiver == 0) {
+                            receiver(client_id);
+                            exit(EXIT_SUCCESS);
+                        } else if (client->receiver < 0) {
                             fprintf(stderr, "\n%s:%d-Receiver fork error: '%s'\n", __FILE__, __LINE__,
                                     strerror(errno));
                             exit(EXIT_FAILURE);
                         }
-                        if (receiver_pid == 0) {
-                            receiver(client);
-                            exit(EXIT_SUCCESS);
-                        }
+
+                    } else {
+                        fprintf(stderr, "\n%s:%d-HT Client [%d] already exists!\n", __FILE__, __LINE__, client->id);
                     }
-                } else {
-                    fprintf(stderr, "\n%s:%d-[%s] stat error: '%s'\n", __FILE__, __LINE__, id_file, strerror(errno));
-                    exit(EXIT_FAILURE);
                 }
             } else {
-                fprintf(stderr, "\n%s:%d-HT File: [%s] already exists!\n", __FILE__, __LINE__, fn);
+                fprintf(stderr, "\n%s:%d-[%s] stat error: '%s'\n", __FILE__, __LINE__, id_file, strerror(errno));
+                exit(EXIT_FAILURE);
             }
         }
     }
@@ -234,41 +298,39 @@ void create(char *filename) {
  * @inotify_delete_event
  * */
 void destroy(char *filename) {
-    char path[PATH_MAX + 1], *f = NULL, *folder = NULL, *f_suffix = NULL;
-    int status = 0, retry = 2;
+    char path[PATH_MAX + 1], *suffix = NULL, *prefix = NULL, *folder = NULL;
+    int client_id = 0, status = 0, retries = 2;;
+    Client client = NULL;
+    prefix = strtok(filename, ".");
+    client_id = (int) strtol(prefix, NULL, 10);
+    if (client_id > 0 && client_id != id) {
+        if (HT_Remove(clientsHT, &client_id, &client_id, false)) {
+            folder = malloc(sizeof(char) * strlen(prefix) + 1);
+            strcpy(folder, prefix);
+            suffix = strtok(NULL, "\0");
+            if (suffix != NULL && !strcmp(suffix, "id")) {
 
-    /* Make a copy of filename.*/
-    if (!(f = malloc(sizeof(char) * strlen(filename) + 1))) {
-        exit(EXIT_FAILURE);
-    }
-
-    strcpy(f, filename);
-
-    folder = strtok(filename, ".");
-    f_suffix = strtok(NULL, "\0");
-
-    if (f_suffix != NULL && !strcmp(f_suffix, "id")) {
-
-        /* Construct path.*/
-        if (sprintf(path, "%s/%s", mirror_dir, folder) < 0) {
-            fprintf(stderr, "\n%s:%d-sprintf error\n", __FILE__, __LINE__);
-        }
-
-        while ((status = _rmdir(path)) && retry-- > 0);
-
-        if (status == EXIT_SUCCESS) {
-            printf("\n-Dir '%s' removed because client has left!\n", path);
-            if (!HT_Remove(clientsHT, f, f, false)) {
-                fprintf(stderr, "\n%s:%d-HT_Remove error\n", __FILE__, __LINE__);
+                /* Construct path.*/
+                if (sprintf(path, "%s/%s", mirror_dir, folder) < 0) {
+                    fprintf(stderr, "\n%s:%d-sprintf error\n", __FILE__, __LINE__);
+                } else {
+                    while ((status = _rmdir(path)) && retries-- > 0);
+                    if (status == EXIT_SUCCESS) {
+                        printf("\n-Dir '%s' removed because client has left!\n", path);
+                    }
+                }
             }
+            free(folder);
+        } else {
+            fprintf(stderr, "\n%s:%d-HT_Remove error\n", __FILE__, __LINE__);
         }
     }
 }
 
 int main(int argc, char *argv[]) {
     char event_buffer[EVENT_BUF_LEN], id_file[PATH_MAX + 1];
-    static struct sigaction quit_action, child_alarm, child_finish;
-    int fd_inotify = 0, ev, wd, status = 0, tries = 3;
+    static struct sigaction quit_action, child_error, child_finish;
+    int fd_inotify = 0, ev, wd, status = 0, tries = 2;
     struct inotify_event *event = NULL;
     struct dirent *d = NULL;
     struct stat s = {0};
@@ -353,14 +415,16 @@ int main(int argc, char *argv[]) {
     sigaction(SIGHUP, &quit_action, NULL);
 
     /* Set custom signal handler for SIGUSR1 (Child alarm timeout) signal.*/
-    child_finish.sa_handler = sig_usr_1_action;
+    child_finish.sa_handler = (__sighandler_t) sig_usr_1_action;
+    child_finish.sa_flags = SA_RESTART | SA_SIGINFO;
     sigfillset(&(child_finish.sa_mask));
     sigaction(SIGUSR1, &child_finish, NULL);
 
     /* Set custom signal handler for SIGUSR2 (Child alarm timeout) signal.*/
-    child_alarm.sa_handler = sig_usr_2_action;
-    sigfillset(&(child_alarm.sa_mask));
-    sigaction(SIGUSR2, &child_alarm, NULL);
+    child_error.sa_handler = (__sighandler_t) sig_usr_2_action;
+    child_error.sa_flags = SA_RESTART | SA_SIGINFO;
+    sigfillset(&(child_error.sa_mask));
+    sigaction(SIGUSR2, &child_error, NULL);
 
     /* Add common_dir at watch list to detect changes.*/
     wd = inotify_add_watch(fd_inotify, common_dir, IN_CREATE | IN_DELETE);
@@ -389,7 +453,7 @@ int main(int argc, char *argv[]) {
 
     /* Read i-notify events*/
     while (!quit) {
-        if ((bytes = read(fd_inotify, event_buffer, EVENT_BUF_LEN)) < 0) {
+       if ((bytes = read(fd_inotify, event_buffer, EVENT_BUF_LEN)) < 0) {
             fprintf(stderr, "\n%s:%d-i-notify event read error: '%s'\n", __FILE__, __LINE__, strerror(errno));
         }
         ev = 0;
@@ -416,11 +480,13 @@ int main(int argc, char *argv[]) {
     /* Close the i-notify instance.*/
     close(fd_inotify);
 
+    /* Wait all childs*/
     while ((wpid = wait(&status)) > 0);
 
     fprintf(logfile, "dn\n");
     fflush(logfile);
 
+    /* Delete id file.*/
     if (unlink(id_file) < 0) {
         fprintf(stderr, "\n%s:%d-[%s] unlink error: '%s'\n", __FILE__, __LINE__, id_file, strerror(errno));
     }
@@ -433,5 +499,6 @@ int main(int argc, char *argv[]) {
 
     fclose(logfile);
 
+    HT_Destroy(&clientsHT, true);
     return 0;
 }
