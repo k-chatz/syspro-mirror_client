@@ -8,7 +8,7 @@
 #include <signal.h>
 #include "receiver.h"
 
-#define TIMEOUT 5
+#define TIMEOUT 10
 
 unsigned long int r_files = 0, r_bytes = 0;
 int r_fd_fifo = 0, r_fd_file = 0, r_fifo_status = 0, s_id = 0;
@@ -36,17 +36,18 @@ void r_term() {
         fprintf(stderr, "\n%s:%d-sigqueue error\n", __FILE__, __LINE__);
     }
 
-    exit(EXIT_FAILURE);
+    _exit(EXIT_FAILURE);
 }
 
 void _r_alarm_action(int signal) {
-    fprintf(stderr, "\nC[%d:%d] SIGNAL(%d) RECEIVER[%d:%d] Alarm timeout!\n", id, getppid(), signal, s_id, getpid());
+    fprintf(stderr, "\nC[%d] SIGNAL(%d) RECEIVER[%d:%d] Alarm timeout!\n", getppid(), signal, s_id, getpid());
     r_term();
 }
 
 /**
  * Receiver child*/
-void receiver(int sender_id) {
+void receiver(int sender_id, int id, char *common_dir, char *input_dir, char *mirror_dir, unsigned long int buffer_size,
+              FILE *logfile) {
     char path[PATH_MAX + 1], fileName[PATH_MAX + 1], buffer[buffer_size], ch, *pch = NULL;
     unsigned long int offset = 0;
     static struct sigaction act;
@@ -68,7 +69,6 @@ void receiver(int sender_id) {
 
     /* set up the signal handler*/
     act.sa_handler = _r_alarm_action;
-    act.sa_flags = SA_RESTART;
     sigfillset(&(act.sa_mask));
     sigaction(SIGALRM, &act, NULL);
 
@@ -192,8 +192,8 @@ void receiver(int sender_id) {
         fprintf(stderr, "\n%s:%d-sigqueue error\n", __FILE__, __LINE__);
     }
 
-/*    fprintf(stdout, "\nC%d:%d-RECEIVER[%d:%d]:-FINISH - Receive %lu files (Total bytes: %lu)\n",
-            id, getppid(), s_id, getpid(), r_files, r_bytes);*/
+    fprintf(stdout, "\nC%d:%d-RECEIVER[%d:%d]:-FINISH - Receive %lu files (Total bytes: %lu)\n",
+            id, getppid(), s_id, getpid(), r_files, r_bytes);
 
     fprintf(logfile, "br %lu\n", r_bytes);
     fflush(logfile);

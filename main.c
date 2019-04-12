@@ -12,7 +12,6 @@
 #include <dirent.h>
 #include <stdbool.h>
 #include <fcntl.h>
-#include <math.h>
 #include <wait.h>
 #include "hash.h"
 #include "sender.h"
@@ -20,17 +19,13 @@
 
 #define EVENT_SIZE (sizeof(struct inotify_event))
 #define EVENT_BUF_LEN (1024 * (EVENT_SIZE + 16))
-
 #define TRIES 2
 
 typedef void *pointer;
 
-Hashtable clientsHT = NULL;
-char *common_dir = NULL, *input_dir = NULL, *mirror_dir = NULL, *log_file = NULL;
-unsigned long int buffer_size = 0;
-int id = 0;
+int p[2];
+int signals = 0;
 bool quit = false;
-FILE *logfile = NULL;
 
 typedef struct Client {
     int id;
@@ -40,13 +35,6 @@ typedef struct Client {
     int receiver_tries;
 } *Client;
 
-/**
- * Calculate number of digits of specific int.*/
-unsigned int _digits(int n) {
-    if (n == 0) return 1;
-    return (unsigned int) floor(log10(abs(n))) + 1;
-}
-
 int _rmdir(char *dir) {
     int status = EXIT_FAILURE;
     __pid_t d_pid = 0;
@@ -54,6 +42,7 @@ int _rmdir(char *dir) {
     if (d_pid == 0) {
         execlp("rm", "rm", "-r", "-f", dir, NULL);
         fprintf(stderr, "\n%s:%d-[%s] execlp error: '%s'\n", __FILE__, __LINE__, dir, strerror(errno));
+        _exit(EXIT_FAILURE);
     } else if (d_pid > 0) {
         waitpid(d_pid, &status, 0);
         if (WIFEXITED(status) && WEXITSTATUS(status) == 0) {
@@ -127,97 +116,55 @@ void readOptions(
     }
 }
 
+
 /**
  * @Signal_handler
  * Interupt or quit action*/
 void sig_int_quit_action(int signal) {
-    fprintf(stdout, "C[%d:%d]: SIGNAL(%d) EXITING...\n", id, getpid(), signal);
-    quit = true;
+    signals++;
+    write(p[1], &signal, sizeof(int));
+    //sig = signal;
 }
 
 /**
  * @Signal_handler
  * SIGCHLD action*/
 void sig_chld_action(int signal, siginfo_t *info, void *context) {
-    int status = 0;
-    pid_t child_pid = info->si_pid;
-    //fprintf(stdout, "C[%d:%d] SIGNAL(%d) CHILD[%d] TERMINATED!\n", id, getpid(), signal, child_pid);
-    pid_t cpid = waitpid(child_pid, &status, 0);
-    if (WIFEXITED(child_pid)) {
-/*        fprintf(stdout, "C[%d:%d] SIGNAL(%d) CHILD[%d] TERMINATED WITH STATUS %d\n", id, getpid(), signal, cpid,
-                WEXITSTATUS(status));*/
-    }
+    pid_t pid = info->si_pid;
+    write(p[1], &signal, sizeof(int));
+    write(p[1], &pid, sizeof(pid_t));
+    signals++;
+    //sig = signal;
 }
 
 /**
  * @Signal_handler
  * Child finish*/
 void sig_usr_1_action(int signal, siginfo_t *info, void *context) {
-    int target_client = info->si_value.sival_int;
-    pid_t child_pid = info->si_pid;
-    Client client = NULL;
-
-    //write(fd, &signal, sizeof(int));
-    //write(fd, &info, sizeof(siginfo_t *));
-    //write(fd, context, sizeof(void *));
-
-    if ((client = HT_Get(clientsHT, &target_client)) != NULL) {
-        if (client->sender == child_pid) {
-            fprintf(stdout, "C[%d:%d] SIGNAL(%d) SENDER[%d:%d] COMPLETE HIS JOB!\n", id, getpid(), signal,
-                    target_client, child_pid);
-        } else if (client->receiver == child_pid) {
-            fprintf(stdout, "C[%d:%d] SIGNAL(%d) RECEIVER[%d:%d] COMPLETE HIS JOB!\n", id, getpid(), signal,
-                    target_client, child_pid);
-        } else {
-            fprintf(stderr, "C[%d:%d] SIGNAL(%d) I don't recognize you %d:%d, tinos eisai esy ??\n",
-                    id, getpid(), signal, child_pid, target_client);
-        }
-    }
+    pid_t pid = info->si_pid;
+    int client = info->si_value.sival_int;
+    write(p[1], &signal, sizeof(int));
+    write(p[1], &pid, sizeof(pid_t));
+    write(p[1], &client, sizeof(int));
+    signals++;
+    //sig = signal;
+    //child_pid = info->si_pid;
+    //target_client = info->si_value.sival_int;
 }
 
 /**
  * @Signal_handler
  * Child alarm timeout*/
 void sig_usr_2_action(int signal, siginfo_t *info, void *context) {
-    int target_client = info->si_value.sival_int;
-    pid_t child_pid = info->si_pid;
-    Client client = NULL;
-
-    if ((client = HT_Get(clientsHT, &target_client)) != NULL) {
-        if (client->sender == child_pid) {
-            fprintf(stderr, "C[%d:%d] SIGNAL(%d) SENDER[%d:%d] FAIL!, %d remaining attempts...\n",
-                    id, getpid(), signal, target_client, child_pid, client->sender_tries);
-            if (client->sender_tries-- > 0) {
-                client->sender = fork();
-                if (client->sender < 0) {
-                    fprintf(stderr, "\n%s:%d-Sender fork error: '%s'\n", __FILE__, __LINE__, strerror(errno));
-                    exit(EXIT_FAILURE);
-                }
-                if (client->sender == 0) {
-                    sender(target_client);
-                    exit(EXIT_SUCCESS);
-                }
-            }
-        } else if (client->receiver == child_pid) {
-            fprintf(stderr, "C[%d:%d] SIGNAL(%d) RECEIVER[%d:%d] FAIL!, %d remaining attempts...\n",
-                    id, getpid(), signal, target_client, child_pid, client->receiver_tries);
-
-            if (client->receiver_tries-- > 0) {
-                client->receiver = fork();
-                if (client->receiver < 0) {
-                    fprintf(stderr, "\n%s:%d Receiver fork error: '%s'\n", __FILE__, __LINE__, strerror(errno));
-                    exit(EXIT_FAILURE);
-                }
-                if (client->receiver == 0) {
-                    receiver(target_client);
-                    exit(EXIT_SUCCESS);
-                }
-            }
-        } else {
-            fprintf(stderr, "C[%d:%d] SIGNAL(%d) I don't recognize you %d:%d, tinos eisai esy ??\n",
-                    id, getpid(), signal, child_pid, target_client);
-        }
-    }
+    pid_t pid = info->si_pid;
+    int client = info->si_value.sival_int;
+    write(p[1], &signal, sizeof(int));
+    write(p[1], &pid, sizeof(pid_t));
+    write(p[1], &client, sizeof(int));
+    signals++;
+    //sig = signal;
+    //child_pid = info->si_pid;
+    //target_client = info->si_value.sival_int;
 }
 
 /**
@@ -257,7 +204,9 @@ void clientDestroy(Client client) {
 /**
  * @inotify_create_event
  * */
-void create(char *filename) {
+void
+create(Hashtable clientsHT, int id, char *common_dir, char *input_dir, char *mirror_dir, unsigned long int buffer_size,
+       FILE *logfile, char *filename) {
     struct stat s = {0};
     char id_file[PATH_MAX + 1], fn[strlen(filename) + 1], *f_suffix = NULL;
     int client_id = 0;
@@ -285,7 +234,8 @@ void create(char *filename) {
                         /* Create sender.*/
                         client->sender = fork();
                         if (client->sender == 0) {
-                            sender(client_id);
+                            HT_Destroy(&clientsHT, false);
+                            sender(client_id, id, common_dir, input_dir, buffer_size, logfile);
                             exit(EXIT_SUCCESS);
                         } else if (client->sender < 0) {
                             fprintf(stderr, "\n%s:%d-Sender fork error: '%s'\n", __FILE__, __LINE__, strerror(errno));
@@ -295,7 +245,8 @@ void create(char *filename) {
                         /* Create receiver.*/
                         client->receiver = fork();
                         if (client->receiver == 0) {
-                            receiver(client_id);
+                            HT_Destroy(&clientsHT, false);
+                            receiver(client_id, id, common_dir, input_dir, mirror_dir, buffer_size, logfile);
                             exit(EXIT_SUCCESS);
                         } else if (client->receiver < 0) {
                             fprintf(stderr, "\n%s:%d-Receiver fork error: '%s'\n", __FILE__, __LINE__,
@@ -318,7 +269,7 @@ void create(char *filename) {
 /**
  * @inotify_delete_event
  * */
-void destroy(char *filename) {
+void destroy(Hashtable clientsHT, int id, char *mirror_dir, char *filename) {
     char path[PATH_MAX + 1], *suffix = NULL, *prefix = NULL, *folder = NULL;
     int client_id = 0, status = 0, retries = 2;;
     prefix = strtok(filename, ".");
@@ -348,16 +299,20 @@ void destroy(char *filename) {
 }
 
 int main(int argc, char *argv[]) {
-    char event_buffer[EVENT_BUF_LEN], id_file[PATH_MAX + 1];
+    char event_buffer[EVENT_BUF_LEN], id_file[
+            PATH_MAX + 1], *common_dir = NULL, *input_dir = NULL, *mirror_dir = NULL, *log_file = NULL;
+    int id = 0, fd_i_notify = 0, ev, wd, status = 0, tries = 2, signal = 0, target_client = 0;
+    unsigned long int buffer_size = 0;
     static struct sigaction quit_action, child_error, child_finish, child_exit;
-    int fd_i_notify = 0, ev, wd, status = 0, tries = 2;
     struct inotify_event *event = NULL;
     struct dirent *d = NULL;
     struct stat s = {0};
-    FILE *file_id = NULL;
+    FILE *logfile = NULL, *file_id = NULL;
+    Hashtable clientsHT = NULL;
+    Client client = NULL;
     ssize_t bytes = 0;
     DIR *dir = NULL;
-    __pid_t wpid = 0;
+    __pid_t wpid = 0, child_pid = 0;
 
     /* Read argument options from command line*/
     readOptions(argc, argv, &id, &common_dir, &input_dir, &mirror_dir, &buffer_size, &log_file);
@@ -370,6 +325,12 @@ int main(int argc, char *argv[]) {
     assert(log_file != NULL);
 
     printf("C[%d:%d] STARTUP\n", id, getpid());
+
+    /* Signals pipe*/
+    if (pipe(p) < 0) {
+        perror("pipe call");
+        exit(EXIT_FAILURE);
+    }
 
     /* Check if input_dir directory exists.*/
     if (!stat(input_dir, &s)) {
@@ -430,7 +391,6 @@ int main(int argc, char *argv[]) {
     /* Set custom signal handler for SIGINT (^c) & SIGQUIT (^\) signals.*/
     quit_action.sa_handler = sig_int_quit_action;
     sigfillset(&(quit_action.sa_mask));
-    child_finish.sa_flags = SA_RESTART;
     sigaction(SIGINT, &quit_action, NULL);
     sigaction(SIGQUIT, &quit_action, NULL);
     sigaction(SIGHUP, &quit_action, NULL);
@@ -438,20 +398,23 @@ int main(int argc, char *argv[]) {
 
     /* Set custom signal handler for SIGCHLD signal.*/
     child_exit.sa_handler = (__sighandler_t) sig_chld_action;
-    child_exit.sa_flags = SA_RESTART | SA_SIGINFO;
+    //child_exit.sa_flags = SA_RESTART | SA_SIGINFO;
+    child_exit.sa_flags = SA_SIGINFO;
     sigfillset(&(child_exit.sa_mask));
     sigaction(SIGCHLD, &child_exit, NULL);
 
 
     /* Set custom signal handler for SIGUSR1 (Child finish normally) signal.*/
     child_finish.sa_handler = (__sighandler_t) sig_usr_1_action;
-    child_finish.sa_flags = SA_RESTART | SA_SIGINFO;
+    //child_finish.sa_flags = SA_RESTART | SA_SIGINFO;
+    child_finish.sa_flags = SA_SIGINFO;
     sigfillset(&(child_finish.sa_mask));
     sigaction(SIGUSR1, &child_finish, NULL);
 
     /* Set custom signal handler for SIGUSR2 (Child error or alarm timeout) signal.*/
     child_error.sa_handler = (__sighandler_t) sig_usr_2_action;
     child_error.sa_flags = SA_RESTART | SA_SIGINFO;
+    //child_error.sa_flags = SA_SIGINFO;
     sigfillset(&(child_error.sa_mask));
     sigaction(SIGUSR2, &child_error, NULL);
 
@@ -475,33 +438,130 @@ int main(int argc, char *argv[]) {
             if (!strcmp(d->d_name, ".") || !strcmp(d->d_name, "..")) {
                 continue;
             }
-            create(d->d_name);
+            create(clientsHT, id, common_dir, input_dir, mirror_dir, buffer_size, logfile, d->d_name);
         }
         closedir(dir);
     }
 
     /* Read i-notify events*/
     while (!quit) {
+        fprintf(stderr, "C[%d:%d] I-NOTIFY BEFORE READ\n", id, getpid());
+
         if ((bytes = read(fd_i_notify, event_buffer, EVENT_BUF_LEN)) < 0) {
             fprintf(stderr, "\n%s:%d-i-notify event read error: '%s'\n", __FILE__, __LINE__, strerror(errno));
         }
+
+        fprintf(stderr, "C[%d:%d] I-NOTIFY AFTER READ\n", id, getpid());
+
+        while (signals > 0) {
+            signals--;
+            read(p[0], &signal, sizeof(int));
+
+            switch (signal) {
+                case 1: //SIGHUP
+                case 2: //SIGINT
+                case 3: //SIGQUIT
+                    fprintf(stdout, "C[%d:%d]: SIGNAL(%d) EXITING...\n", id, getpid(), signal);
+                    quit = true;
+                    break;
+                case 10: //SIGUSR1
+                    read(p[0], &child_pid, sizeof(pid_t));
+                    read(p[0], &target_client, sizeof(int));
+                    if ((client = HT_Get(clientsHT, &target_client)) != NULL) {
+                        if (client->sender == child_pid) {
+                            fprintf(stdout, "C[%d:%d] SIGNAL(%d) SENDER[%d:%d] COMPLETE HIS JOB!\n", id, getpid(),
+                                    signal,
+                                    target_client, child_pid);
+                        } else if (client->receiver == child_pid) {
+                            fprintf(stdout, "C[%d:%d] SIGNAL(%d) RECEIVER[%d:%d] COMPLETE HIS JOB!\n", id, getpid(),
+                                    signal,
+                                    target_client, child_pid);
+                        } else {
+                            fprintf(stderr, "C[%d:%d] SIGNAL(%d) I don't recognize you [%d:%d], tinos eisai esy ??\n",
+                                    id, getpid(), signal, child_pid, target_client);
+                        }
+                    }
+                case 12: //SIGUSR2
+                    read(p[0], &child_pid, sizeof(pid_t));
+                    read(p[0], &target_client, sizeof(int));
+                    if ((client = HT_Get(clientsHT, &target_client)) != NULL) {
+                        if (client->sender == child_pid) {
+                            fprintf(stderr, "C[%d:%d] SIGNAL(%d) SENDER[%d:%d] FAIL!, %d REMAINING ATTEMPTS...\n",
+                                    id, getpid(), signal, target_client, child_pid, client->sender_tries);
+                            if (client->sender_tries-- > 0) {
+                                client->sender = fork();
+                                if (client->sender < 0) {
+                                    fprintf(stderr, "\n%s:%d-Sender fork error: '%s'\n", __FILE__, __LINE__,
+                                            strerror(errno));
+                                    exit(EXIT_FAILURE);
+                                }
+                                if (client->sender == 0) {
+                                    sender(target_client, id, common_dir, input_dir, buffer_size, logfile);
+                                    exit(EXIT_SUCCESS);
+                                }
+                            }
+                        } else if (client->receiver == child_pid) {
+                            fprintf(stderr, "C[%d:%d] SIGNAL(%d) RECEIVER[%d:%d] FAIL!, %d REMAINING ATTEMPTS...\n",
+                                    id, getpid(), signal, target_client, child_pid, client->receiver_tries);
+
+                            if (client->receiver_tries-- > 0) {
+                                client->receiver = fork();
+                                if (client->receiver < 0) {
+                                    fprintf(stderr, "\n%s:%d Receiver fork error: '%s'\n", __FILE__, __LINE__,
+                                            strerror(errno));
+                                    exit(EXIT_FAILURE);
+                                }
+                                if (client->receiver == 0) {
+                                    receiver(target_client, id, common_dir, input_dir, mirror_dir, buffer_size,
+                                             logfile);
+                                    exit(EXIT_SUCCESS);
+                                }
+                            }
+                        } else {
+                            fprintf(stderr, "C[%d:%d] SIGNAL(%d) I don't recognize you [%d:%d], tinos eisai esy ??\n",
+                                    id, getpid(), signal, child_pid, target_client);
+                        }
+                    }
+                    break;
+                case 17: //SIGCHLD
+                    read(p[0], &child_pid, sizeof(pid_t));
+                    fprintf(stdout, "C[%d:%d] SIGNAL(%d) CHILD[%d] TERMINATED!\n", id, getpid(), signal, child_pid);
+                    pid_t cpid = waitpid(child_pid, &status, 0);
+                    if (WIFEXITED(child_pid)) {
+                        fprintf(stdout, "C[%d:%d] SIGNAL(%d) CHILD[%d] TERMINATED WITH STATUS %d\n", id, getpid(),
+                                signal,
+                                cpid,
+                                WEXITSTATUS(status));
+                    }
+
+                    break;
+
+                default:
+
+                    break;
+            }
+        }
+
         ev = 0;
         while (ev < bytes) {
             event = (struct inotify_event *) &event_buffer[ev];
             if (event->len) {
                 if (event->mask & IN_CREATE) {
                     if (!(event->mask & IN_ISDIR)) {
-                        create(event->name);
+                        create(clientsHT, id, common_dir, input_dir, mirror_dir, buffer_size, logfile, event->name);
                     }
                 } else if (event->mask & IN_DELETE) {
                     if (!(event->mask & IN_ISDIR)) {
-                        destroy(event->name);
+                        destroy(clientsHT, id, mirror_dir, event->name);
                     }
                 }
                 ev += EVENT_SIZE + event->len;
             }
         }
+
     }
+
+    fprintf(stdout, "C[%d:%d] EXIT\n", id, getpid());
 
     /* Remove common_dir from watch list.*/
     inotify_rm_watch(fd_i_notify, wd);

@@ -9,10 +9,11 @@
 #include <stdio.h>
 #include "sender.h"
 
-#define TIMEOUT 5
+#define TIMEOUT 10
 
 unsigned long int s_files = 0, s_bytes = 0;
 int s_fd_fifo = 0, s_fd_file = 0, s_fifo_status = 0, r_id = 0;
+
 char s_fifo[PATH_MAX + 1];
 
 void s_term() {
@@ -41,13 +42,13 @@ void s_term() {
 }
 
 void _s_alarm_action(int signal) {
-    fprintf(stderr, "\nC[%d:%d] SIGNAL(%d) SENDER[%d:%d] Alarm timeout!\n", id, getppid(), signal, r_id, getpid());
+    fprintf(stderr, "\nC[%d] SIGNAL(%d) SENDER[%d:%d] Alarm timeout!\n", getppid(), signal, r_id, getpid());
     s_term();
 }
 
 /**
  * Read directory & subdirectories recursively*/
-void rec_cp(const char *_p) {
+void rec_cp(const char *_p, char *input_dir, unsigned long int buffer_size) {
     char buffer[buffer_size], dirName[PATH_MAX + 1], *fileName = NULL, path[PATH_MAX + 1];
     int fileNameLength = 0;
     __uint32_t fileSize = 0;
@@ -101,7 +102,7 @@ void rec_cp(const char *_p) {
 
                     s_bytes += bytes;
 
-                    rec_cp(path);
+                    rec_cp(path, input_dir, buffer_size);
                 } else if (S_ISREG(s.st_mode)) {
 
                     fileNameLength = (__uint16_t) strlen(fileName);
@@ -169,7 +170,7 @@ void rec_cp(const char *_p) {
 
 /**
  * Sender child*/
-void sender(int receiver_id) {
+void sender(int receiver_id, int id, char *common_dir, char *input_dir, unsigned long int buffer_size, FILE *logfile) {
     __uint16_t fileNameLength = 0;
     static struct sigaction act;
     union sigval sigval = {.sival_int = receiver_id};
@@ -186,7 +187,6 @@ void sender(int receiver_id) {
 
     /* set up the signal handler*/
     act.sa_handler = _s_alarm_action;
-    act.sa_flags = SA_RESTART;
     sigfillset(&(act.sa_mask));
     sigaction(SIGALRM, &act, NULL);
 
@@ -209,8 +209,10 @@ void sender(int receiver_id) {
     }
     alarm(0);
 
+    fprintf(stdout, "C[%d:%d] SENDER[%d:%d] AFTER OPEN\n", id, getppid(), r_id, getpid());
+
     /* Write to fifo for each file or folder.*/
-    rec_cp(input_dir);
+    rec_cp(input_dir, input_dir, buffer_size);
 
     fileNameLength = 0;
 
@@ -236,8 +238,8 @@ void sender(int receiver_id) {
         fprintf(stderr, "\n%s:%d-sigqueue error\n", __FILE__, __LINE__);
     }
 
-/*    fprintf(stdout, "\nC%d:%d-SENDER[%d:%d]:-FINISH - Send %lu files (Total bytes %lu)\n",
-            id, getppid(), r_id, getpid(), s_files, s_bytes);*/
+    fprintf(stdout, "\nC%d:%d-SENDER[%d:%d]:-FINISH - Send %lu files (Total bytes %lu)\n",
+            id, getppid(), r_id, getpid(), s_files, s_bytes);
 
     fprintf(logfile, "bs %lu\n", s_bytes);
     fflush(logfile);
