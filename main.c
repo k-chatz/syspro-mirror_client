@@ -24,7 +24,7 @@
 typedef void *pointer;
 
 int p[2];
-int signals = 0;
+volatile sig_atomic_t signals = 0;
 bool quit = false;
 
 typedef struct Client {
@@ -116,24 +116,12 @@ void readOptions(
     }
 }
 
-
 /**
  * @Signal_handler
  * Interupt or quit action*/
 void sig_int_quit_action(int signal) {
     signals++;
     write(p[1], &signal, sizeof(int));
-    //sig = signal;
-}
-
-/**
- * @Signal_handler
- * SIGCHLD action*/
-void sig_chld_action(int signal, siginfo_t *info, void *context) {
-    pid_t pid = info->si_pid;
-    write(p[1], &signal, sizeof(int));
-    write(p[1], &pid, sizeof(pid_t));
-    signals++;
     //sig = signal;
 }
 
@@ -147,9 +135,6 @@ void sig_usr_1_action(int signal, siginfo_t *info, void *context) {
     write(p[1], &pid, sizeof(pid_t));
     write(p[1], &client, sizeof(int));
     signals++;
-    //sig = signal;
-    //child_pid = info->si_pid;
-    //target_client = info->si_value.sival_int;
 }
 
 /**
@@ -162,9 +147,16 @@ void sig_usr_2_action(int signal, siginfo_t *info, void *context) {
     write(p[1], &pid, sizeof(pid_t));
     write(p[1], &client, sizeof(int));
     signals++;
-    //sig = signal;
-    //child_pid = info->si_pid;
-    //target_client = info->si_value.sival_int;
+}
+
+/**
+ * @Signal_handler
+ * SIGCHLD action*/
+void sig_chld_action(int signal, siginfo_t *info, void *context) {
+    pid_t pid = info->si_pid;
+    write(p[1], &signal, sizeof(int));
+    write(p[1], &pid, sizeof(pid_t));
+    signals++;
 }
 
 /**
@@ -324,7 +316,7 @@ int main(int argc, char *argv[]) {
     assert(buffer_size > 0);
     assert(log_file != NULL);
 
-    printf("C[%d:%d] STARTUP\n", id, getpid());
+    printf("C[%d:%d] STARTED\n", id, getpid());
 
     /* Signals pipe*/
     if (pipe(p) < 0) {
@@ -390,7 +382,7 @@ int main(int argc, char *argv[]) {
 
     /* Set custom signal handler for SIGINT (^c) & SIGQUIT (^\) signals.*/
     quit_action.sa_handler = sig_int_quit_action;
-    sigfillset(&(quit_action.sa_mask));
+    sigemptyset(&(quit_action.sa_mask));
     sigaction(SIGINT, &quit_action, NULL);
     sigaction(SIGQUIT, &quit_action, NULL);
     sigaction(SIGHUP, &quit_action, NULL);
@@ -398,9 +390,8 @@ int main(int argc, char *argv[]) {
 
     /* Set custom signal handler for SIGCHLD signal.*/
     child_exit.sa_handler = (__sighandler_t) sig_chld_action;
-    //child_exit.sa_flags = SA_RESTART | SA_SIGINFO;
     child_exit.sa_flags = SA_SIGINFO;
-    sigfillset(&(child_exit.sa_mask));
+    sigemptyset(&(child_exit.sa_mask));
     sigaction(SIGCHLD, &child_exit, NULL);
 
 
@@ -408,14 +399,14 @@ int main(int argc, char *argv[]) {
     child_finish.sa_handler = (__sighandler_t) sig_usr_1_action;
     //child_finish.sa_flags = SA_RESTART | SA_SIGINFO;
     child_finish.sa_flags = SA_SIGINFO;
-    sigfillset(&(child_finish.sa_mask));
+    sigemptyset(&(child_finish.sa_mask));
     sigaction(SIGUSR1, &child_finish, NULL);
 
     /* Set custom signal handler for SIGUSR2 (Child error or alarm timeout) signal.*/
     child_error.sa_handler = (__sighandler_t) sig_usr_2_action;
     child_error.sa_flags = SA_RESTART | SA_SIGINFO;
     //child_error.sa_flags = SA_SIGINFO;
-    sigfillset(&(child_error.sa_mask));
+    sigemptyset(&(child_error.sa_mask));
     sigaction(SIGUSR2, &child_error, NULL);
 
     /* Add common_dir at watch list to detect changes.*/
@@ -482,9 +473,9 @@ int main(int argc, char *argv[]) {
                     read(p[0], &target_client, sizeof(int));
                     if ((client = HT_Get(clientsHT, &target_client)) != NULL) {
                         if (client->sender == child_pid) {
-                            fprintf(stdout, "C[%d:%d] SENDER[%d:%d] FAIL! %d REMAINING ATTEMPTS\n",
-                                    id, getpid(), target_client, child_pid, client->sender_tries);
                             if (client->sender_tries-- > 0) {
+                                fprintf(stdout, "C[%d:%d] SENDER[%d:%d] FAIL! ATTEMPT %d\n",
+                                        id, getpid(), target_client, child_pid, TRIES - client->sender_tries);
                                 client->sender = fork();
                                 if (client->sender < 0) {
                                     fprintf(stderr, "\n%s:%d-Sender fork error: '%s'\n", __FILE__, __LINE__,
@@ -495,12 +486,14 @@ int main(int argc, char *argv[]) {
                                     sender(target_client, id, common_dir, input_dir, buffer_size, logfile);
                                     exit(EXIT_SUCCESS);
                                 }
+                            } else {
+                                fprintf(stdout, "C[%d:%d] SENDER[%d:%d] FAIL! I GIVE UP\n",
+                                        id, getpid(), target_client, child_pid);
                             }
                         } else if (client->receiver == child_pid) {
-                            fprintf(stdout, "C[%d:%d] RECEIVER[%d:%d] FAIL! %d REMAINING ATTEMPTS\n",
-                                    id, getpid(), target_client, child_pid, client->receiver_tries);
-
                             if (client->receiver_tries-- > 0) {
+                                fprintf(stdout, "C[%d:%d] RECEIVER[%d:%d] FAIL! ATTEMPT %d\n",
+                                        id, getpid(), target_client, child_pid, TRIES - client->receiver_tries);
                                 client->receiver = fork();
                                 if (client->receiver < 0) {
                                     fprintf(stderr, "\n%s:%d Receiver fork error: '%s'\n", __FILE__, __LINE__,
@@ -512,6 +505,9 @@ int main(int argc, char *argv[]) {
                                              logfile);
                                     exit(EXIT_SUCCESS);
                                 }
+                            } else {
+                                fprintf(stdout, "C[%d:%d] RECEIVER[%d:%d] FAIL! I GIVE UP\n",
+                                        id, getpid(), target_client, child_pid);
                             }
                         } else {
                             fprintf(stderr, "C[%d:%d] I don't recognize you [%d:%d], tinos eisai esy ??\n",
@@ -521,12 +517,9 @@ int main(int argc, char *argv[]) {
                     break;
                 case SIGCHLD:
                     read(p[0], &child_pid, sizeof(pid_t));
-                    //fprintf(stdout, "C[%d:%d] SIGNAL(%d) CHILD[%d] TERMINATED!\n", id, getpid(), signal, child_pid);
                     pid_t cpid = waitpid(child_pid, &status, 0);
-                    if (WIFEXITED(child_pid)) {
-                        fprintf(stdout, "C[%d:%d] SIGNAL(%d) CHILD[%d] TERMINATED WITH STATUS %d\n", id, getpid(),
-                                signal,
-                                cpid,
+                    if (WIFEXITED(status)) {
+                        fprintf(stdout, "C[%d:%d] CHILD[%d] TERMINATED WITH STATUS %d\n", id, getpid(), cpid,
                                 WEXITSTATUS(status));
                     }
                     break;

@@ -1,0 +1,13 @@
+::: DROPBOX SIMULATION WITH PIPES & PROCESSES IN C PROGRAMMING LANGUAGE :::
+
+compile: make
+
+clean: make clean
+
+compile manually: gcc -o mirror_client main.c sender.c receiver.c hash.c
+
+run example:
+
+./mirror_client -n 1 -c /common -i /1_input -m /1_mirror -b 100 -l /common/1_log
+
+documentation: open 'documentation.pdf' file.

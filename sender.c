@@ -9,16 +9,14 @@
 #include <stdio.h>
 #include "sender.h"
 
-#define TIMEOUT 10
+#define TIMEOUT 5
 
 unsigned long int s_files = 0, s_bytes = 0;
 int s_fd_fifo = 0, s_fd_file = 0, s_fifo_status = 0, r_id = 0;
 
 char s_fifo[PATH_MAX + 1];
 
-void s_term() {
-    /* Send a signal to the parent process to inform that child got an error.*/
-    union sigval sigval = {.sival_int = r_id};
+void s_clean_up() {
     /* Close fifo if is open.*/
     if (s_fd_fifo > 0) {
         close(s_fd_fifo);
@@ -33,22 +31,24 @@ void s_term() {
     if (s_fd_file > 0) {
         close(s_fd_file);
     }
-
-    if ((sigqueue(getppid(), SIGUSR2, sigval)) < 0) {
-        fprintf(stderr, "\n%s:%d-sigqueue error\n", __FILE__, __LINE__);
-    }
-
-    exit(EXIT_FAILURE);
 }
 
 void _s_alarm_action(int signal) {
-    fprintf(stderr, "C[%d] SENDER[%d:%d] ALARM TIMEOUT!\n", getppid(), r_id, getpid());
-    s_term();
+    //fprintf(stderr, "C[%d] SENDER[%d:%d] ALARM TIMEOUT!\n", getppid(), r_id, getpid());
+    union sigval sigval = {.sival_int = r_id};
+    write(2, "SENDER ALARM TIMEOUT\n", 21);
+    s_clean_up();
+    if ((sigqueue(getppid(), SIGUSR2, sigval)) < 0) {
+        fprintf(stderr, "\n%s:%d-SIGUSR2 error\n", __FILE__, __LINE__);
+    }
+    _exit(EXIT_FAILURE);
 }
 
 /**
  * Read directory & subdirectories recursively*/
 void rec_cp(const char *_p, char *input_dir, unsigned long int buffer_size) {
+    /* Send a signal to the parent process to inform that child got an error.*/
+    union sigval sigval = {.sival_int = r_id};
     char buffer[buffer_size], dirName[PATH_MAX + 1], *fileName = NULL, path[PATH_MAX + 1];
     int fileNameLength = 0;
     __uint32_t fileSize = 0;
@@ -67,7 +67,11 @@ void rec_cp(const char *_p, char *input_dir, unsigned long int buffer_size) {
             /* Construct real path.*/
             if (sprintf(path, "%s/%s", _p, d->d_name) < 0) {
                 fprintf(stderr, "\n%s:%d-sprintf error\n", __FILE__, __LINE__);
-                s_term();
+                s_clean_up();
+                if ((sigqueue(getppid(), SIGUSR2, sigval)) < 0) {
+                    fprintf(stderr, "\n%s:%d-SIGUSR2 error\n", __FILE__, __LINE__);
+                }
+                exit(EXIT_FAILURE);
             }
 
             /* Get file statistics*/
@@ -84,7 +88,11 @@ void rec_cp(const char *_p, char *input_dir, unsigned long int buffer_size) {
                     alarm(TIMEOUT);
                     if ((bytes = write(s_fd_fifo, &fileNameLength, sizeof(__uint16_t))) < 0) {
                         fprintf(stderr, "\n%s:%d-fifo write error: '%s'\n", __FILE__, __LINE__, strerror(errno));
-                        s_term();
+                        s_clean_up();
+                        if ((sigqueue(getppid(), SIGUSR2, sigval)) < 0) {
+                            fprintf(stderr, "\n%s:%d-SIGUSR2 error\n", __FILE__, __LINE__);
+                        }
+                        exit(EXIT_FAILURE);
                     }
                     alarm(0);
 
@@ -96,7 +104,11 @@ void rec_cp(const char *_p, char *input_dir, unsigned long int buffer_size) {
                     alarm(TIMEOUT);
                     if ((bytes = write(s_fd_fifo, dirName, (size_t) fileNameLength)) < 0) {
                         fprintf(stderr, "\n%s:%d-fifo write error: '%s'\n", __FILE__, __LINE__, strerror(errno));
-                        s_term();
+                        s_clean_up();
+                        if ((sigqueue(getppid(), SIGUSR2, sigval)) < 0) {
+                            fprintf(stderr, "\n%s:%d-SIGUSR2 error\n", __FILE__, __LINE__);
+                        }
+                        exit(EXIT_FAILURE);
                     }
                     alarm(0);
 
@@ -110,7 +122,11 @@ void rec_cp(const char *_p, char *input_dir, unsigned long int buffer_size) {
                     alarm(TIMEOUT);
                     if ((bytes = write(s_fd_fifo, &fileNameLength, sizeof(__uint16_t))) < 0) {
                         fprintf(stderr, "\n%s:%d-fifo write error: '%s'\n", __FILE__, __LINE__, strerror(errno));
-                        s_term();
+                        s_clean_up();
+                        if ((sigqueue(getppid(), SIGUSR2, sigval)) < 0) {
+                            fprintf(stderr, "\n%s:%d-SIGUSR2 error\n", __FILE__, __LINE__);
+                        }
+                        exit(EXIT_FAILURE);
                     }
                     alarm(0);
 
@@ -119,7 +135,11 @@ void rec_cp(const char *_p, char *input_dir, unsigned long int buffer_size) {
                     alarm(TIMEOUT);
                     if ((bytes = write(s_fd_fifo, fileName, strlen(fileName))) < 0) {
                         fprintf(stderr, "\n%s:%d-fifo write error: '%s'\n", __FILE__, __LINE__, strerror(errno));
-                        s_term();
+                        s_clean_up();
+                        if ((sigqueue(getppid(), SIGUSR2, sigval)) < 0) {
+                            fprintf(stderr, "\n%s:%d-SIGUSR2 error\n", __FILE__, __LINE__);
+                        }
+                        exit(EXIT_FAILURE);
                     }
                     alarm(0);
 
@@ -129,13 +149,21 @@ void rec_cp(const char *_p, char *input_dir, unsigned long int buffer_size) {
                     if ((s_fd_file = open(path, O_RDONLY)) < 0) {
                         fprintf(stderr, "\n%s:%d-file %s open error: '%s'\n", __FILE__, __LINE__, path,
                                 strerror(errno));
-                        s_term();
+                        s_clean_up();
+                        if ((sigqueue(getppid(), SIGUSR2, sigval)) < 0) {
+                            fprintf(stderr, "\n%s:%d-SIGUSR2 error\n", __FILE__, __LINE__);
+                        }
+                        exit(EXIT_FAILURE);
                     }
 
                     alarm(TIMEOUT);
                     if ((bytes = write(s_fd_fifo, &fileSize, sizeof(__uint32_t))) < 0) {
                         fprintf(stderr, "\n%s:%d-fifo write error: '%s'\n", __FILE__, __LINE__, strerror(errno));
-                        s_term();
+                        s_clean_up();
+                        if ((sigqueue(getppid(), SIGUSR2, sigval)) < 0) {
+                            fprintf(stderr, "\n%s:%d-SIGUSR2 error\n", __FILE__, __LINE__);
+                        }
+                        exit(EXIT_FAILURE);
                     }
                     alarm(0);
 
@@ -149,7 +177,11 @@ void rec_cp(const char *_p, char *input_dir, unsigned long int buffer_size) {
                                 if ((bytes = write(s_fd_fifo, buffer, (size_t) n)) < 0) {
                                     fprintf(stderr, "\n%s:%d-fifo write error: '%s'\n", __FILE__, __LINE__,
                                             strerror(errno));
-                                    s_term();
+                                    s_clean_up();
+                                    if ((sigqueue(getppid(), SIGUSR2, sigval)) < 0) {
+                                        fprintf(stderr, "\n%s:%d-SIGUSR2 error\n", __FILE__, __LINE__);
+                                    }
+                                    exit(EXIT_FAILURE);
                                 }
                                 alarm(0);
 
@@ -161,7 +193,11 @@ void rec_cp(const char *_p, char *input_dir, unsigned long int buffer_size) {
                 }
             } else {
                 fprintf(stderr, "\n%s:%d-[%s] stat error: '%s'\n", __FILE__, __LINE__, path, strerror(errno));
-                s_term();
+                s_clean_up();
+                if ((sigqueue(getppid(), SIGUSR2, sigval)) < 0) {
+                    fprintf(stderr, "\n%s:%d-SIGUSR2 error\n", __FILE__, __LINE__);
+                }
+                exit(EXIT_FAILURE);
             }
         }
         closedir(dir);
@@ -183,33 +219,43 @@ void sender(int receiver_id, int id, char *common_dir, char *input_dir, unsigned
     s_fifo_status = 0;
     ssize_t bytes = 0;
 
-    fprintf(stdout, "C[%d:%d] SENDER[%d:%d] STARTUP\n", id, getppid(), r_id, getpid());
+    fprintf(stdout, "C[%d:%d] SENDER[%d:%d] STARTED\n", id, getppid(), r_id, getpid());
 
     /* set up the signal handler*/
     act.sa_handler = _s_alarm_action;
-    sigfillset(&(act.sa_mask));
+    sigemptyset(&(act.sa_mask));
     sigaction(SIGALRM, &act, NULL);
 
     /* Construct fifo filename*/
     if (sprintf(s_fifo, "%s/id%d_to_id%d.fifo", common_dir, id, r_id) < 0) {
         fprintf(stderr, "\n%s:%d-sprintf error\n", __FILE__, __LINE__);
-        s_term();
+        s_clean_up();
+        if ((sigqueue(getppid(), SIGUSR2, sigval)) < 0) {
+            fprintf(stderr, "\n%s:%d-SIGUSR2 error\n", __FILE__, __LINE__);
+        }
+        exit(EXIT_FAILURE);
     }
 
     /* Create fifo*/
     if ((s_fifo_status = mkfifo(s_fifo, S_IRUSR | S_IWUSR | S_IXUSR) < 0) && (errno != EEXIST)) {
         fprintf(stderr, "\n%s:%d-[%s] mkfifo error: '%s'\n", __FILE__, __LINE__, s_fifo, strerror(errno));
-        s_term();
+        s_clean_up();
+        if ((sigqueue(getppid(), SIGUSR2, sigval)) < 0) {
+            fprintf(stderr, "\n%s:%d-SIGUSR2 error\n", __FILE__, __LINE__);
+        }
+        exit(EXIT_FAILURE);
     }
 
     alarm(TIMEOUT);
     if ((s_fd_fifo = open(s_fifo, O_WRONLY)) < 0) {
         fprintf(stderr, "\n%s:%d-[%s] fifo open error: '%s'\n", __FILE__, __LINE__, s_fifo, strerror(errno));
-        s_term();
+        s_clean_up();
+        if ((sigqueue(getppid(), SIGUSR2, sigval)) < 0) {
+            fprintf(stderr, "\n%s:%d-SIGUSR2 error\n", __FILE__, __LINE__);
+        }
+        exit(EXIT_FAILURE);
     }
     alarm(0);
-
-    fprintf(stdout, "C[%d:%d] SENDER[%d:%d] AFTER OPEN\n", id, getppid(), r_id, getpid());
 
     /* Write to fifo for each file or folder.*/
     rec_cp(input_dir, input_dir, buffer_size);
@@ -219,7 +265,11 @@ void sender(int receiver_id, int id, char *common_dir, char *input_dir, unsigned
     alarm(TIMEOUT);
     if ((bytes = write(s_fd_fifo, &fileNameLength, sizeof(__uint16_t))) < 0) {
         fprintf(stderr, "\n%s:%d-fifo write error: '%s'\n", __FILE__, __LINE__, strerror(errno));
-        s_term();
+        s_clean_up();
+        if ((sigqueue(getppid(), SIGUSR2, sigval)) < 0) {
+            fprintf(stderr, "\n%s:%d-SIGUSR2 error\n", __FILE__, __LINE__);
+        }
+        exit(EXIT_FAILURE);
     }
     alarm(0);
 
@@ -236,6 +286,10 @@ void sender(int receiver_id, int id, char *common_dir, char *input_dir, unsigned
     /* Send a signal to the parent process to inform that everything went well!*/
     if ((sigqueue(getppid(), SIGUSR1, sigval)) < 0) {
         fprintf(stderr, "\n%s:%d-sigqueue error\n", __FILE__, __LINE__);
+        if ((sigqueue(getppid(), SIGUSR2, sigval)) < 0) {
+            fprintf(stderr, "\n%s:%d-SIGUSR2 error\n", __FILE__, __LINE__);
+        }
+        exit(EXIT_FAILURE);
     }
 
     fprintf(stdout, "\nC%d:%d-SENDER[%d:%d]:-FINISH - Send %lu files (Total bytes %lu)\n",
