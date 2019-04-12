@@ -445,26 +445,22 @@ int main(int argc, char *argv[]) {
 
     /* Read i-notify events*/
     while (!quit) {
-        fprintf(stderr, "C[%d:%d] I-NOTIFY BEFORE READ\n", id, getpid());
-
         if ((bytes = read(fd_i_notify, event_buffer, EVENT_BUF_LEN)) < 0) {
             fprintf(stderr, "\n%s:%d-i-notify event read error: '%s'\n", __FILE__, __LINE__, strerror(errno));
         }
-
-        fprintf(stderr, "C[%d:%d] I-NOTIFY AFTER READ\n", id, getpid());
 
         while (signals > 0) {
             signals--;
             read(p[0], &signal, sizeof(int));
 
             switch (signal) {
-                case 1: //SIGHUP
-                case 2: //SIGINT
-                case 3: //SIGQUIT
+                case SIGHUP:
+                case SIGINT:
+                case SIGQUIT:
                     fprintf(stdout, "C[%d:%d]: SIGNAL(%d) EXITING...\n", id, getpid(), signal);
                     quit = true;
                     break;
-                case 10: //SIGUSR1
+                case SIGUSR1:
                     read(p[0], &child_pid, sizeof(pid_t));
                     read(p[0], &target_client, sizeof(int));
                     if ((client = HT_Get(clientsHT, &target_client)) != NULL) {
@@ -481,13 +477,13 @@ int main(int argc, char *argv[]) {
                                     id, getpid(), signal, child_pid, target_client);
                         }
                     }
-                case 12: //SIGUSR2
+                case SIGUSR2:
                     read(p[0], &child_pid, sizeof(pid_t));
                     read(p[0], &target_client, sizeof(int));
                     if ((client = HT_Get(clientsHT, &target_client)) != NULL) {
                         if (client->sender == child_pid) {
-                            fprintf(stderr, "C[%d:%d] SIGNAL(%d) SENDER[%d:%d] FAIL!, %d REMAINING ATTEMPTS...\n",
-                                    id, getpid(), signal, target_client, child_pid, client->sender_tries);
+                            fprintf(stdout, "C[%d:%d] SENDER[%d:%d] FAIL! %d REMAINING ATTEMPTS\n",
+                                    id, getpid(), target_client, child_pid, client->sender_tries);
                             if (client->sender_tries-- > 0) {
                                 client->sender = fork();
                                 if (client->sender < 0) {
@@ -501,8 +497,8 @@ int main(int argc, char *argv[]) {
                                 }
                             }
                         } else if (client->receiver == child_pid) {
-                            fprintf(stderr, "C[%d:%d] SIGNAL(%d) RECEIVER[%d:%d] FAIL!, %d REMAINING ATTEMPTS...\n",
-                                    id, getpid(), signal, target_client, child_pid, client->receiver_tries);
+                            fprintf(stdout, "C[%d:%d] RECEIVER[%d:%d] FAIL! %d REMAINING ATTEMPTS\n",
+                                    id, getpid(), target_client, child_pid, client->receiver_tries);
 
                             if (client->receiver_tries-- > 0) {
                                 client->receiver = fork();
@@ -518,14 +514,14 @@ int main(int argc, char *argv[]) {
                                 }
                             }
                         } else {
-                            fprintf(stderr, "C[%d:%d] SIGNAL(%d) I don't recognize you [%d:%d], tinos eisai esy ??\n",
-                                    id, getpid(), signal, child_pid, target_client);
+                            fprintf(stderr, "C[%d:%d] I don't recognize you [%d:%d], tinos eisai esy ??\n",
+                                    id, getpid(), child_pid, target_client);
                         }
                     }
                     break;
-                case 17: //SIGCHLD
+                case SIGCHLD:
                     read(p[0], &child_pid, sizeof(pid_t));
-                    fprintf(stdout, "C[%d:%d] SIGNAL(%d) CHILD[%d] TERMINATED!\n", id, getpid(), signal, child_pid);
+                    //fprintf(stdout, "C[%d:%d] SIGNAL(%d) CHILD[%d] TERMINATED!\n", id, getpid(), signal, child_pid);
                     pid_t cpid = waitpid(child_pid, &status, 0);
                     if (WIFEXITED(child_pid)) {
                         fprintf(stdout, "C[%d:%d] SIGNAL(%d) CHILD[%d] TERMINATED WITH STATUS %d\n", id, getpid(),
@@ -533,11 +529,9 @@ int main(int argc, char *argv[]) {
                                 cpid,
                                 WEXITSTATUS(status));
                     }
-
                     break;
-
                 default:
-
+                    fprintf(stderr, "C[%d:%d] SIGNAL(%d) UNCATCHED SIGNAL\n", id, getpid(), signal);
                     break;
             }
         }

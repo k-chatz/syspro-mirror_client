@@ -40,7 +40,7 @@ void r_term() {
 }
 
 void _r_alarm_action(int signal) {
-    fprintf(stderr, "\nC[%d] SIGNAL(%d) RECEIVER[%d:%d] Alarm timeout!\n", getppid(), signal, s_id, getpid());
+    fprintf(stderr, "C[%d] RECEIVER[%d:%d] ALARM TIMEOUT!\n", getppid(), s_id, getpid());
     r_term();
 }
 
