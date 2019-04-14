@@ -9,7 +9,10 @@
 #include <stdio.h>
 #include "sender.h"
 
-#define TIMEOUT 5
+#define COLOR "\x1B[32m"
+#define RESET "\x1B[0m"
+
+#define TIMEOUT 30
 
 unsigned long int s_files = 0, s_bytes = 0;
 int s_fd_fifo = 0, s_fd_file = 0, s_fifo_status = 0, r_id = 0;
@@ -219,11 +222,11 @@ void sender(int receiver_id, int id, char *common_dir, char *input_dir, unsigned
     s_fifo_status = 0;
     ssize_t bytes = 0;
 
-    fprintf(stdout, "C[%d:%d] SENDER[%d:%d] STARTED\n", id, getppid(), r_id, getpid());
+    fprintf(stdout, COLOR"C[%d:%d] SENDER[%d:%d] STARTED"RESET"\n", id, getppid(), r_id, getpid());
 
     /* set up the signal handler*/
     act.sa_handler = _s_alarm_action;
-    sigemptyset(&(act.sa_mask));
+    sigfillset(&(act.sa_mask));
     sigaction(SIGALRM, &act, NULL);
 
     /* Construct fifo filename*/
@@ -292,7 +295,7 @@ void sender(int receiver_id, int id, char *common_dir, char *input_dir, unsigned
         exit(EXIT_FAILURE);
     }
 
-    fprintf(stdout, "\nC%d:%d-SENDER[%d:%d]:-FINISH - Send %lu files (Total bytes %lu)\n",
+    fprintf(stdout, COLOR"C[%d:%d] SENDER[%d:%d] FINISH - Send %lu files (Total bytes %lu)"RESET"\n",
             id, getppid(), r_id, getpid(), s_files, s_bytes);
 
     fprintf(logfile, "bs %lu\n", s_bytes);

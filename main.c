@@ -17,6 +17,9 @@
 #include "sender.h"
 #include "receiver.h"
 
+#define COLOR "\x1B[33m"
+#define RESET "\x1B[0m"
+
 #define EVENT_SIZE (sizeof(struct inotify_event))
 #define EVENT_BUF_LEN (1024 * (EVENT_SIZE + 16))
 #define TRIES 2
@@ -120,15 +123,18 @@ void readOptions(
  * @Signal_handler
  * Interupt or quit action*/
 void sig_int_quit_action(int signal) {
+    //sleep(1000);
+    //return;
     signals++;
     write(p[1], &signal, sizeof(int));
-    //sig = signal;
 }
 
 /**
  * @Signal_handler
  * Child finish*/
 void sig_usr_1_action(int signal, siginfo_t *info, void *context) {
+    //sleep(1000);
+    //return;
     pid_t pid = info->si_pid;
     int client = info->si_value.sival_int;
     write(p[1], &signal, sizeof(int));
@@ -141,6 +147,8 @@ void sig_usr_1_action(int signal, siginfo_t *info, void *context) {
  * @Signal_handler
  * Child alarm timeout*/
 void sig_usr_2_action(int signal, siginfo_t *info, void *context) {
+    //sleep(1000);
+    //return;
     pid_t pid = info->si_pid;
     int client = info->si_value.sival_int;
     write(p[1], &signal, sizeof(int));
@@ -153,6 +161,8 @@ void sig_usr_2_action(int signal, siginfo_t *info, void *context) {
  * @Signal_handler
  * SIGCHLD action*/
 void sig_chld_action(int signal, siginfo_t *info, void *context) {
+    //sleep(1000);
+    //return;
     pid_t pid = info->si_pid;
     write(p[1], &signal, sizeof(int));
     write(p[1], &pid, sizeof(pid_t));
@@ -316,7 +326,7 @@ int main(int argc, char *argv[]) {
     assert(buffer_size > 0);
     assert(log_file != NULL);
 
-    printf("C[%d:%d] STARTED\n", id, getpid());
+    printf(COLOR"C[%d:%d] STARTED"RESET"\n", id, getpid());
 
     /* Signals pipe*/
     if (pipe(p) < 0) {
@@ -382,7 +392,8 @@ int main(int argc, char *argv[]) {
 
     /* Set custom signal handler for SIGINT (^c) & SIGQUIT (^\) signals.*/
     quit_action.sa_handler = sig_int_quit_action;
-    sigemptyset(&(quit_action.sa_mask));
+    sigfillset(&(quit_action.sa_mask));
+    quit_action.sa_flags = SA_RESTART | SA_SIGINFO;
     sigaction(SIGINT, &quit_action, NULL);
     sigaction(SIGQUIT, &quit_action, NULL);
     sigaction(SIGHUP, &quit_action, NULL);
@@ -390,24 +401,24 @@ int main(int argc, char *argv[]) {
 
     /* Set custom signal handler for SIGCHLD signal.*/
     child_exit.sa_handler = (__sighandler_t) sig_chld_action;
-    child_exit.sa_flags = SA_SIGINFO;
-    sigemptyset(&(child_exit.sa_mask));
+    child_exit.sa_flags = SA_RESTART | SA_SIGINFO;
+    sigfillset(&(child_exit.sa_mask));
     sigaction(SIGCHLD, &child_exit, NULL);
 
 
     /* Set custom signal handler for SIGUSR1 (Child finish normally) signal.*/
     child_finish.sa_handler = (__sighandler_t) sig_usr_1_action;
-    //child_finish.sa_flags = SA_RESTART | SA_SIGINFO;
-    child_finish.sa_flags = SA_SIGINFO;
-    sigemptyset(&(child_finish.sa_mask));
+    child_finish.sa_flags = SA_RESTART | SA_SIGINFO;
+    sigfillset(&(child_finish.sa_mask));
     sigaction(SIGUSR1, &child_finish, NULL);
+
 
     /* Set custom signal handler for SIGUSR2 (Child error or alarm timeout) signal.*/
     child_error.sa_handler = (__sighandler_t) sig_usr_2_action;
     child_error.sa_flags = SA_RESTART | SA_SIGINFO;
-    //child_error.sa_flags = SA_SIGINFO;
-    sigemptyset(&(child_error.sa_mask));
+    sigfillset(&(child_error.sa_mask));
     sigaction(SIGUSR2, &child_error, NULL);
+
 
     /* Add common_dir at watch list to detect changes.*/
     wd = inotify_add_watch(fd_i_notify, common_dir, IN_CREATE | IN_DELETE);
@@ -448,7 +459,7 @@ int main(int argc, char *argv[]) {
                 case SIGHUP:
                 case SIGINT:
                 case SIGQUIT:
-                    fprintf(stdout, "C[%d:%d]: SIGNAL(%d) EXITING...\n", id, getpid(), signal);
+                    fprintf(stdout, COLOR"C[%d:%d]: SIGNAL(%d) EXITING..."RESET"\n", id, getpid(), signal);
                     quit = true;
                     break;
                 case SIGUSR1:
@@ -456,15 +467,15 @@ int main(int argc, char *argv[]) {
                     read(p[0], &target_client, sizeof(int));
                     if ((client = HT_Get(clientsHT, &target_client)) != NULL) {
                         if (client->sender == child_pid) {
-                            fprintf(stdout, "C[%d:%d] SIGNAL(%d) SENDER[%d:%d] COMPLETE HIS JOB!\n", id, getpid(),
+                            fprintf(stdout, COLOR"C[%d:%d] SIGNAL(%d) SENDER[%d:%d] COMPLETE HIS JOB!\n", id, getpid(),
                                     signal,
                                     target_client, child_pid);
                         } else if (client->receiver == child_pid) {
-                            fprintf(stdout, "C[%d:%d] SIGNAL(%d) RECEIVER[%d:%d] COMPLETE HIS JOB!\n", id, getpid(),
+                            fprintf(stdout, COLOR"C[%d:%d] SIGNAL(%d) RECEIVER[%d:%d] COMPLETE HIS JOB!\n", id, getpid(),
                                     signal,
                                     target_client, child_pid);
                         } else {
-                            fprintf(stderr, "C[%d:%d] SIGNAL(%d) I don't recognize you [%d:%d], tinos eisai esy ??\n",
+                            fprintf(stderr, COLOR"C[%d:%d] SIGNAL(%d) I don't recognize you [%d:%d], tinos eisai esy ??\n",
                                     id, getpid(), signal, child_pid, target_client);
                         }
                     }
@@ -474,7 +485,7 @@ int main(int argc, char *argv[]) {
                     if ((client = HT_Get(clientsHT, &target_client)) != NULL) {
                         if (client->sender == child_pid) {
                             if (client->sender_tries-- > 0) {
-                                fprintf(stdout, "C[%d:%d] SENDER[%d:%d] FAIL! ATTEMPT %d\n",
+                                fprintf(stderr, COLOR"C[%d:%d] SENDER[%d:%d] FAIL! ATTEMPT %d\n",
                                         id, getpid(), target_client, child_pid, TRIES - client->sender_tries);
                                 client->sender = fork();
                                 if (client->sender < 0) {
@@ -487,12 +498,12 @@ int main(int argc, char *argv[]) {
                                     exit(EXIT_SUCCESS);
                                 }
                             } else {
-                                fprintf(stdout, "C[%d:%d] SENDER[%d:%d] FAIL! I GIVE UP\n",
+                                fprintf(stderr, COLOR"C[%d:%d] SENDER[%d:%d] FAIL! I GIVE UP\n",
                                         id, getpid(), target_client, child_pid);
                             }
                         } else if (client->receiver == child_pid) {
                             if (client->receiver_tries-- > 0) {
-                                fprintf(stdout, "C[%d:%d] RECEIVER[%d:%d] FAIL! ATTEMPT %d\n",
+                                fprintf(stderr, COLOR"C[%d:%d] RECEIVER[%d:%d] FAIL! ATTEMPT %d"RESET"\n",
                                         id, getpid(), target_client, child_pid, TRIES - client->receiver_tries);
                                 client->receiver = fork();
                                 if (client->receiver < 0) {
@@ -506,7 +517,7 @@ int main(int argc, char *argv[]) {
                                     exit(EXIT_SUCCESS);
                                 }
                             } else {
-                                fprintf(stdout, "C[%d:%d] RECEIVER[%d:%d] FAIL! I GIVE UP\n",
+                                fprintf(stderr, COLOR"C[%d:%d] RECEIVER[%d:%d] FAIL! I GIVE UP"RESET"\n",
                                         id, getpid(), target_client, child_pid);
                             }
                         } else {
@@ -519,7 +530,7 @@ int main(int argc, char *argv[]) {
                     read(p[0], &child_pid, sizeof(pid_t));
                     pid_t cpid = waitpid(child_pid, &status, 0);
                     if (WIFEXITED(status)) {
-                        fprintf(stdout, "C[%d:%d] CHILD[%d] TERMINATED WITH STATUS %d\n", id, getpid(), cpid,
+                        fprintf(stdout, COLOR"C[%d:%d] CHILD[%d] TERMINATED WITH STATUS %d"RESET"\n", id, getpid(), cpid,
                                 WEXITSTATUS(status));
                     }
                     break;
@@ -548,7 +559,7 @@ int main(int argc, char *argv[]) {
 
     }
 
-    fprintf(stdout, "C[%d:%d] EXIT\n", id, getpid());
+    fprintf(stdout, COLOR"C[%d:%d] EXIT"RESET"\n", id, getpid());
 
     /* Remove common_dir from watch list.*/
     inotify_rm_watch(fd_i_notify, wd);

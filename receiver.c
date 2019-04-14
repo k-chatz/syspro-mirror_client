@@ -8,7 +8,10 @@
 #include <signal.h>
 #include "receiver.h"
 
-#define TIMEOUT 5
+#define COLOR "\x1B[34m"
+#define RESET "\x1B[0m"
+
+#define TIMEOUT 30
 
 unsigned long int r_files = 0, r_bytes = 0;
 int r_fd_fifo = 0, r_fd_file = 0, r_fifo_status = 0, s_id = 0;
@@ -57,7 +60,7 @@ void receiver(int sender_id, int id, char *common_dir, char *input_dir, char *mi
     __uint32_t fileSize = 0;
     ssize_t bytes = 0;
 
-    fprintf(stdout, "C[%d:%d] RECEIVER[%d:%d] STARTED\n", id, getppid(), s_id, getpid());
+    fprintf(stdout, COLOR"C[%d:%d] RECEIVER[%d:%d] STARTED"RESET"\n", id, getppid(), s_id, getpid());
 
     r_fd_fifo = 0;
     r_fd_file = 0;
@@ -67,7 +70,7 @@ void receiver(int sender_id, int id, char *common_dir, char *input_dir, char *mi
 
     /* set up the signal handler*/
     act.sa_handler = _r_alarm_action;
-    sigemptyset(&(act.sa_mask));
+    sigfillset(&(act.sa_mask));
     sigaction(SIGALRM, &act, NULL);
 
     /* Construct fifo filename*/
@@ -234,8 +237,12 @@ void receiver(int sender_id, int id, char *common_dir, char *input_dir, char *mi
         exit(EXIT_FAILURE);
     }
 
-    fprintf(stdout, "\nC%d:%d-RECEIVER[%d:%d]:-FINISH - Receive %lu files (Total bytes: %lu)\n",
+    printf("\033[0;31m");
+    fprintf(stdout, COLOR"C[%d:%d] RECEIVER[%d:%d] FINISH - Receive %lu files (Total bytes: %lu)"RESET"\n",
             id, getppid(), s_id, getpid(), r_files, r_bytes);
+
+    printf("\033[0m");
+
 
     fprintf(logfile, "br %lu\n", r_bytes);
     fflush(logfile);
