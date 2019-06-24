@@ -52,7 +52,7 @@ for i in range(numOfInitialClients):
     num_of_files = random.randint(10, 30)
     num_of_dirs = random.randint(5, 10)
     levels = random.randint(2, 4)
-    print("./create_infiles.sh {} {} {} {}".format(
+    print("\n\n./create_infiles.sh {} {} {} {}".format(
         inputFileName, num_of_files, num_of_dirs, levels))
     subprocess.check_call(
         [

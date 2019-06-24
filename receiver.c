@@ -60,7 +60,7 @@ void receiver(int sender_id, int id, char *common_dir, char *input_dir, char *mi
     __uint32_t fileSize = 0;
     ssize_t bytes = 0;
 
-    fprintf(stdout, COLOR"C[%d:%d] RECEIVER[%d:%d] STARTED"RESET"\n", id, getppid(), s_id, getpid());
+    fprintf(stdout, COLOR"C[%d:%d] • • • RECEIVER[%d:%d] STARTED"RESET"\n", id, getppid(), s_id, getpid());
 
     r_fd_fifo = 0;
     r_fd_file = 0;
@@ -238,7 +238,7 @@ void receiver(int sender_id, int id, char *common_dir, char *input_dir, char *mi
     }
 
     printf("\033[0;31m");
-    fprintf(stdout, COLOR"C[%d:%d] RECEIVER[%d:%d] FINISH - Receive %lu files (Total bytes: %lu)"RESET"\n",
+    fprintf(stdout, COLOR"C[%d:%d] • • • RECEIVER[%d:%d] FINISH - Receive %lu files (Total bytes: %lu)"RESET"\n",
             id, getppid(), s_id, getpid(), r_files, r_bytes);
 
     printf("\033[0m");

@@ -222,7 +222,7 @@ void sender(int receiver_id, int id, char *common_dir, char *input_dir, unsigned
     s_fifo_status = 0;
     ssize_t bytes = 0;
 
-    fprintf(stdout, COLOR"C[%d:%d] SENDER[%d:%d] STARTED"RESET"\n", id, getppid(), r_id, getpid());
+    fprintf(stdout, COLOR"C[%d:%d] • • • SENDER[%d:%d] STARTED"RESET"\n", id, getppid(), r_id, getpid());
 
     /* set up the signal handler*/
     act.sa_handler = _s_alarm_action;
@@ -295,7 +295,7 @@ void sender(int receiver_id, int id, char *common_dir, char *input_dir, unsigned
         exit(EXIT_FAILURE);
     }
 
-    fprintf(stdout, COLOR"C[%d:%d] SENDER[%d:%d] FINISH - Send %lu files (Total bytes %lu)"RESET"\n",
+    fprintf(stdout, COLOR"C[%d:%d] • • • SENDER[%d:%d] FINISH - Send %lu files (Total bytes %lu)"RESET"\n",
             id, getppid(), r_id, getpid(), s_files, s_bytes);
 
     fprintf(logfile, "bs %lu\n", s_bytes);

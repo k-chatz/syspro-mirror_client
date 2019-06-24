@@ -26,8 +26,11 @@
 
 typedef void *pointer;
 
-int p[2];
-volatile sig_atomic_t signals = 0;
+int p_sig_usr_1[2];
+int p_sig_usr_2[2];
+int p_sig_chld[2];
+
+volatile sig_atomic_t sig_usr_2 = 0, sig_int_quit_hup = 0, sig_usr_1 = 0, sig_chld = 0;
 bool quit = false;
 
 typedef struct Client {
@@ -123,50 +126,38 @@ void readOptions(
  * @Signal_handler
  * Interupt or quit action*/
 void sig_int_quit_action(int signal) {
-    //sleep(1000);
-    //return;
-    signals++;
-    write(p[1], &signal, sizeof(int));
+    sig_int_quit_hup++;
 }
 
 /**
  * @Signal_handler
  * Child finish*/
 void sig_usr_1_action(int signal, siginfo_t *info, void *context) {
-    //sleep(1000);
-    //return;
     pid_t pid = info->si_pid;
     int client = info->si_value.sival_int;
-    write(p[1], &signal, sizeof(int));
-    write(p[1], &pid, sizeof(pid_t));
-    write(p[1], &client, sizeof(int));
-    signals++;
+    write(p_sig_usr_1[1], &pid, sizeof(pid_t));
+    write(p_sig_usr_1[1], &client, sizeof(int));
+    sig_usr_1++;
 }
 
 /**
  * @Signal_handler
  * Child alarm timeout*/
 void sig_usr_2_action(int signal, siginfo_t *info, void *context) {
-    //sleep(1000);
-    //return;
     pid_t pid = info->si_pid;
     int client = info->si_value.sival_int;
-    write(p[1], &signal, sizeof(int));
-    write(p[1], &pid, sizeof(pid_t));
-    write(p[1], &client, sizeof(int));
-    signals++;
+    write(p_sig_usr_2[1], &pid, sizeof(pid_t));
+    write(p_sig_usr_2[1], &client, sizeof(int));
+    sig_usr_2++;
 }
 
 /**
  * @Signal_handler
  * SIGCHLD action*/
 void sig_chld_action(int signal, siginfo_t *info, void *context) {
-    //sleep(1000);
-    //return;
     pid_t pid = info->si_pid;
-    write(p[1], &signal, sizeof(int));
-    write(p[1], &pid, sizeof(pid_t));
-    signals++;
+    write(p_sig_chld[1], &pid, sizeof(pid_t));
+    sig_chld++;
 }
 
 /**
@@ -303,7 +294,7 @@ void destroy(Hashtable clientsHT, int id, char *mirror_dir, char *filename) {
 int main(int argc, char *argv[]) {
     char event_buffer[EVENT_BUF_LEN], id_file[
             PATH_MAX + 1], *common_dir = NULL, *input_dir = NULL, *mirror_dir = NULL, *log_file = NULL;
-    int id = 0, fd_i_notify = 0, ev, wd, status = 0, tries = 2, signal = 0, target_client = 0;
+    int id = 0, fd_i_notify = 0, ev, wd, status = 0, tries = 2, target_client = 0;
     unsigned long int buffer_size = 0;
     static struct sigaction quit_action, child_error, child_finish, child_exit;
     struct inotify_event *event = NULL;
@@ -329,7 +320,19 @@ int main(int argc, char *argv[]) {
     printf(COLOR"C[%d:%d] STARTED"RESET"\n", id, getpid());
 
     /* Signals pipe*/
-    if (pipe(p) < 0) {
+    if (pipe(p_sig_usr_1) < 0) {
+        perror("pipe call");
+        exit(EXIT_FAILURE);
+    }
+
+    /* Signals pipe*/
+    if (pipe(p_sig_usr_2) < 0) {
+        perror("pipe call");
+        exit(EXIT_FAILURE);
+    }
+
+    /* Signals pipe*/
+    if (pipe(p_sig_chld) < 0) {
         perror("pipe call");
         exit(EXIT_FAILURE);
     }
@@ -392,8 +395,8 @@ int main(int argc, char *argv[]) {
 
     /* Set custom signal handler for SIGINT (^c) & SIGQUIT (^\) signals.*/
     quit_action.sa_handler = sig_int_quit_action;
-    sigfillset(&(quit_action.sa_mask));
-    quit_action.sa_flags = SA_RESTART | SA_SIGINFO;
+    sigfillset(&quit_action.sa_mask);
+    //quit_action.sa_flags = SA_RESTART;
     sigaction(SIGINT, &quit_action, NULL);
     sigaction(SIGQUIT, &quit_action, NULL);
     sigaction(SIGHUP, &quit_action, NULL);
@@ -451,92 +454,89 @@ int main(int argc, char *argv[]) {
             fprintf(stderr, "\n%s:%d-i-notify event read error: '%s'\n", __FILE__, __LINE__, strerror(errno));
         }
 
-        while (signals > 0) {
-            signals--;
-            read(p[0], &signal, sizeof(int));
 
-            switch (signal) {
-                case SIGHUP:
-                case SIGINT:
-                case SIGQUIT:
-                    fprintf(stdout, COLOR"C[%d:%d]: SIGNAL(%d) EXITING..."RESET"\n", id, getpid(), signal);
-                    quit = true;
-                    break;
-                case SIGUSR1:
-                    read(p[0], &child_pid, sizeof(pid_t));
-                    read(p[0], &target_client, sizeof(int));
-                    if ((client = HT_Get(clientsHT, &target_client)) != NULL) {
-                        if (client->sender == child_pid) {
-                            fprintf(stdout, COLOR"C[%d:%d] SIGNAL(%d) SENDER[%d:%d] COMPLETE HIS JOB!\n", id, getpid(),
-                                    signal,
-                                    target_client, child_pid);
-                        } else if (client->receiver == child_pid) {
-                            fprintf(stdout, COLOR"C[%d:%d] SIGNAL(%d) RECEIVER[%d:%d] COMPLETE HIS JOB!\n", id, getpid(),
-                                    signal,
-                                    target_client, child_pid);
-                        } else {
-                            fprintf(stderr, COLOR"C[%d:%d] SIGNAL(%d) I don't recognize you [%d:%d], tinos eisai esy ??\n",
-                                    id, getpid(), signal, child_pid, target_client);
+        if (sig_int_quit_hup) {
+            sig_int_quit_hup--;
+            fprintf(stdout, COLOR"C[%d:%d]: EXITING..."RESET"\n", id, getpid());
+            quit = true;
+        }
+
+        if (sig_usr_1) {
+            sig_usr_1--;
+            read(p_sig_usr_1[0], &child_pid, sizeof(pid_t));
+            read(p_sig_usr_1[0], &target_client, sizeof(int));
+            if ((client = HT_Get(clientsHT, &target_client)) != NULL) {
+                if (client->sender == child_pid) {
+                    fprintf(stdout, COLOR"C[%d:%d] SENDER[%d:%d] COMPLETE HIS JOB!\n", id, getpid(),
+                            target_client, child_pid);
+                } else if (client->receiver == child_pid) {
+                    fprintf(stdout, COLOR"C[%d:%d] RECEIVER[%d:%d] COMPLETE HIS JOB!\n", id,
+                            getpid(),target_client, child_pid);
+                } else {
+                    fprintf(stderr,
+                            COLOR"C[%d:%d] I don't recognize you [%d:%d], tinos eisai esy ??\n",
+                            id, getpid(), child_pid, target_client);
+                }
+            }
+        }
+
+        if (sig_usr_2) {
+            sig_usr_2--;
+            read(p_sig_usr_2[0], &child_pid, sizeof(pid_t));
+            read(p_sig_usr_2[0], &target_client, sizeof(int));
+            if ((client = HT_Get(clientsHT, &target_client)) != NULL) {
+                if (client->sender == child_pid) {
+                    if (client->sender_tries-- > 0) {
+                        fprintf(stderr, "C[%d:%d] SENDER[%d:%d] FAIL! ATTEMPT %d\n",
+                                id, getpid(), target_client, child_pid, TRIES - client->sender_tries);
+                        client->sender = fork();
+                        if (client->sender < 0) {
+                            fprintf(stderr, "\n%s:%d-Sender fork error: '%s'\n", __FILE__, __LINE__,
+                                    strerror(errno));
+                            exit(EXIT_FAILURE);
                         }
-                    }
-                case SIGUSR2:
-                    read(p[0], &child_pid, sizeof(pid_t));
-                    read(p[0], &target_client, sizeof(int));
-                    if ((client = HT_Get(clientsHT, &target_client)) != NULL) {
-                        if (client->sender == child_pid) {
-                            if (client->sender_tries-- > 0) {
-                                fprintf(stderr, COLOR"C[%d:%d] SENDER[%d:%d] FAIL! ATTEMPT %d\n",
-                                        id, getpid(), target_client, child_pid, TRIES - client->sender_tries);
-                                client->sender = fork();
-                                if (client->sender < 0) {
-                                    fprintf(stderr, "\n%s:%d-Sender fork error: '%s'\n", __FILE__, __LINE__,
-                                            strerror(errno));
-                                    exit(EXIT_FAILURE);
-                                }
-                                if (client->sender == 0) {
-                                    sender(target_client, id, common_dir, input_dir, buffer_size, logfile);
-                                    exit(EXIT_SUCCESS);
-                                }
-                            } else {
-                                fprintf(stderr, COLOR"C[%d:%d] SENDER[%d:%d] FAIL! I GIVE UP\n",
-                                        id, getpid(), target_client, child_pid);
-                            }
-                        } else if (client->receiver == child_pid) {
-                            if (client->receiver_tries-- > 0) {
-                                fprintf(stderr, COLOR"C[%d:%d] RECEIVER[%d:%d] FAIL! ATTEMPT %d"RESET"\n",
-                                        id, getpid(), target_client, child_pid, TRIES - client->receiver_tries);
-                                client->receiver = fork();
-                                if (client->receiver < 0) {
-                                    fprintf(stderr, "\n%s:%d Receiver fork error: '%s'\n", __FILE__, __LINE__,
-                                            strerror(errno));
-                                    exit(EXIT_FAILURE);
-                                }
-                                if (client->receiver == 0) {
-                                    receiver(target_client, id, common_dir, input_dir, mirror_dir, buffer_size,
-                                             logfile);
-                                    exit(EXIT_SUCCESS);
-                                }
-                            } else {
-                                fprintf(stderr, COLOR"C[%d:%d] RECEIVER[%d:%d] FAIL! I GIVE UP"RESET"\n",
-                                        id, getpid(), target_client, child_pid);
-                            }
-                        } else {
-                            fprintf(stderr, "C[%d:%d] I don't recognize you [%d:%d], tinos eisai esy ??\n",
-                                    id, getpid(), child_pid, target_client);
+                        if (client->sender == 0) {
+                            sender(target_client, id, common_dir, input_dir, buffer_size, logfile);
+                            exit(EXIT_SUCCESS);
                         }
+                    } else {
+                        fprintf(stderr, "C[%d:%d] SENDER[%d:%d] FAIL! I GIVE UP\n",
+                                id, getpid(), target_client, child_pid);
                     }
-                    break;
-                case SIGCHLD:
-                    read(p[0], &child_pid, sizeof(pid_t));
-                    pid_t cpid = waitpid(child_pid, &status, 0);
-                    if (WIFEXITED(status)) {
-                        fprintf(stdout, COLOR"C[%d:%d] CHILD[%d] TERMINATED WITH STATUS %d"RESET"\n", id, getpid(), cpid,
-                                WEXITSTATUS(status));
+                } else if (client->receiver == child_pid) {
+                    if (client->receiver_tries-- > 0) {
+                        fprintf(stderr, "C[%d:%d] RECEIVER[%d:%d] FAIL! ATTEMPT %d\n",
+                                id, getpid(), target_client, child_pid, TRIES - client->receiver_tries);
+                        client->receiver = fork();
+                        if (client->receiver < 0) {
+                            fprintf(stderr, "\n%s:%d Receiver fork error: '%s'\n", __FILE__, __LINE__,
+                                    strerror(errno));
+                            exit(EXIT_FAILURE);
+                        }
+                        if (client->receiver == 0) {
+                            receiver(target_client, id, common_dir, input_dir, mirror_dir, buffer_size,
+                                     logfile);
+                            exit(EXIT_SUCCESS);
+                        }
+                    } else {
+                        fprintf(stderr, "C[%d:%d] RECEIVER[%d:%d] FAIL! I GIVE UP\n",
+                                id, getpid(), target_client, child_pid);
                     }
-                    break;
-                default:
-                    fprintf(stderr, "C[%d:%d] SIGNAL(%d) UNCATCHED SIGNAL\n", id, getpid(), signal);
-                    break;
+                } else {
+                    fprintf(stderr, "C[%d:%d] I don't recognize you [%d:%d], tinos eisai esy ??\n",
+                            id, getpid(), child_pid, target_client);
+                }
+            }
+        }
+
+        if (sig_chld) {
+            sig_chld--;
+            read(p_sig_chld[0], &child_pid, sizeof(pid_t));
+            pid_t cpid = waitpid(child_pid, &status, 0);
+            if (WIFEXITED(status)) {
+                fprintf(stdout, COLOR"C[%d:%d] CHILD[%d] TERMINATED WITH STATUS %d"RESET"\n", id, getpid(),
+                        cpid,
+                        WEXITSTATUS(status));
             }
         }
 
