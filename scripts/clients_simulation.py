@@ -1,3 +1,5 @@
+# Author: antoni4040 (https://github.com/antoni4040/Syspro-2019-Ergasia2-Client-Simulation)
+
 from multiprocessing import Process
 import subprocess
 import os
